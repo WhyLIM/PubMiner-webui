@@ -160,13 +160,13 @@ This project has already been improved beyond the initial scaffold. Notable chan
 Install dependencies from the project root:
 
 ```bash
-npm install
+pnpm install
 ```
 
 Start the frontend:
 
 ```bash
-npm run dev
+pnpm dev
 ```
 
 By default the frontend runs on:
