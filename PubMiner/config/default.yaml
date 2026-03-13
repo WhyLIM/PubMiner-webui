@@ -1,0 +1,59 @@
+# PubMiner Default Configuration
+# ================================
+# Copy this file and modify for your needs
+
+# NCBI API Configuration
+ncbi:
+  email: "${NCBI_EMAIL}"                # Required by NCBI
+  api_key: "${NCBI_API_KEY}"            # Optional: increases rate limit to 10 req/s
+  tool_name: "PubMiner"
+  rate_limit_without_key: 0.34          # ~3 requests/second
+  rate_limit_with_key: 0.1              # ~10 requests/second
+
+# Zhipu AI API Configuration
+zhipu:
+  api_key: "${ZHIPU_API_KEY}"           # Set via environment variable
+  model: "glm-4-flash"                  # Options: glm-4, glm-4-flash, glm-4-plus
+  temperature: 0.1                      # Lower = more deterministic
+  max_tokens: 4096
+  rate_limit: 0.5                       # Seconds between requests
+  max_retries: 3
+  use_coding_plan: true                 # Use Coding Plan endpoint (default: true)
+
+# Literature Search Configuration
+search:
+  max_results: 100                      # Maximum articles to process
+  batch_size: 200                       # Batch size for fetching
+  date_range: null                      # Optional: ["2020/01/01", "2024/12/31"]
+
+# Full-text Download Configuration
+download:
+  sections:                             # Sections to extract for LLM
+    - "ABSTRACT"
+    - "INTRO"
+    - "METHODS"
+    - "RESULTS"
+    - "DISCUSSION"
+    - "CONCLUSION"
+  timeout: 30                           # Request timeout (seconds)
+  max_retries: 3
+
+# LLM Extraction Configuration
+extraction:
+  base_fields: true                     # Extract standard fields
+  custom_fields_file: null              # Path to custom fields YAML
+  max_retries: 3                        # Retry on validation failures
+  concurrency: 5                        # Parallel extractions
+
+# Output Configuration
+output:
+  directory: "./output"
+  format: "csv"
+  include_abstract: false
+  filename_prefix: "pubminer_result"
+
+# Checkpoint/Resume Configuration
+checkpoint:
+  enabled: true
+  directory: "./output/checkpoints"
+  auto_resume: true

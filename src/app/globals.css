@@ -1,0 +1,312 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* Academic Theme - Inspired by Nobel Prize & Nature */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-serif: var(--font-cormorant);
+  
+  /* Academic Color Palette - Morandi-inspired with scholarly blue */
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+  
+  /* Sidebar */
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  
+  /* Chart colors - refined academic palette */
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  
+  /* Radius */
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+  --radius: 0.5rem;
+  
+  /* Background - Pure white with subtle warmth */
+  --background: oklch(0.995 0.002 90);
+  --foreground: oklch(0.18 0.01 250);
+  
+  /* Card */
+  --card: oklch(0.99 0.002 90);
+  --card-foreground: oklch(0.18 0.01 250);
+  
+  /* Popover - Solid white for dropdowns */
+  --popover: oklch(0.998 0 0);
+  --popover-foreground: oklch(0.18 0.01 250);
+  
+  /* Explicit solid background for all dropdowns */
+  --dropdown-bg: oklch(0.998 0 0);
+  
+  /* Primary - Scholarly Blue (deep, refined) */
+  --primary: oklch(0.35 0.08 250);
+  --primary-foreground: oklch(0.99 0 0);
+  
+  /* Secondary - Soft warm gray */
+  --secondary: oklch(0.95 0.008 80);
+  --secondary-foreground: oklch(0.25 0.01 250);
+  
+  /* Muted - Elegant gray */
+  --muted: oklch(0.96 0.005 80);
+  --muted-foreground: oklch(0.45 0.01 250);
+  
+  /* Accent - Soft sage green */
+  --accent: oklch(0.92 0.02 150);
+  --accent-foreground: oklch(0.25 0.02 150);
+  
+  /* Destructive */
+  --destructive: oklch(0.55 0.18 25);
+  
+  /* Border & Input - Very subtle */
+  --border: oklch(0.91 0.005 80);
+  --input: oklch(0.91 0.005 80);
+  --ring: oklch(0.35 0.08 250);
+  
+  /* Chart - Academic color harmony */
+  --chart-1: oklch(0.45 0.12 250);  /* Scholarly blue */
+  --chart-2: oklch(0.55 0.10 180);  /* Teal */
+  --chart-3: oklch(0.60 0.08 30);   /* Warm amber */
+  --chart-4: oklch(0.50 0.10 320);  /* Mauve */
+  --chart-5: oklch(0.55 0.12 140);  /* Sage green */
+  
+  /* Sidebar */
+  --sidebar: oklch(0.98 0.005 80);
+  --sidebar-foreground: oklch(0.18 0.01 250);
+  --sidebar-primary: oklch(0.35 0.08 250);
+  --sidebar-primary-foreground: oklch(0.99 0 0);
+  --sidebar-accent: oklch(0.94 0.01 250);
+  --sidebar-accent-foreground: oklch(0.35 0.08 250);
+  --sidebar-border: oklch(0.91 0.005 80);
+  --sidebar-ring: oklch(0.35 0.08 250);
+}
+
+.dark {
+  --background: oklch(0.14 0.01 250);
+  --foreground: oklch(0.95 0.005 80);
+  
+  --card: oklch(0.17 0.01 250);
+  --card-foreground: oklch(0.95 0.005 80);
+  
+  --popover: oklch(0.17 0.01 250);
+  --popover-foreground: oklch(0.95 0.005 80);
+  
+  --primary: oklch(0.70 0.12 250);
+  --primary-foreground: oklch(0.14 0.01 250);
+  
+  --secondary: oklch(0.22 0.01 250);
+  --secondary-foreground: oklch(0.95 0.005 80);
+  
+  --muted: oklch(0.22 0.01 250);
+  --muted-foreground: oklch(0.65 0.01 250);
+  
+  --accent: oklch(0.25 0.02 150);
+  --accent-foreground: oklch(0.92 0.02 150);
+  
+  --destructive: oklch(0.60 0.18 25);
+  
+  --border: oklch(0.28 0.01 250);
+  --input: oklch(0.28 0.01 250);
+  --ring: oklch(0.70 0.12 250);
+  
+  --chart-1: oklch(0.70 0.15 250);
+  --chart-2: oklch(0.70 0.12 180);
+  --chart-3: oklch(0.70 0.10 30);
+  --chart-4: oklch(0.65 0.12 320);
+  --chart-5: oklch(0.68 0.12 140);
+  
+  --sidebar: oklch(0.12 0.01 250);
+  --sidebar-foreground: oklch(0.95 0.005 80);
+  --sidebar-primary: oklch(0.70 0.12 250);
+  --sidebar-primary-foreground: oklch(0.14 0.01 250);
+  --sidebar-accent: oklch(0.22 0.02 250);
+  --sidebar-accent-foreground: oklch(0.70 0.12 250);
+  --sidebar-border: oklch(0.28 0.01 250);
+  --sidebar-ring: oklch(0.70 0.12 250);
+}
+
+/* Base styles */
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+  
+  /* Container - fully centered */
+  .container {
+    @apply mx-auto max-w-7xl px-4 sm:px-6 lg:px-8;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  
+  /* Elegant typography scale */
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-serif tracking-tight;
+    text-rendering: optimizeLegibility;
+  }
+  
+  h1 {
+    @apply text-4xl font-normal leading-tight;
+  }
+  
+  h2 {
+    @apply text-3xl font-normal leading-snug;
+  }
+  
+  h3 {
+    @apply text-2xl font-normal leading-snug;
+  }
+  
+  h4 {
+    @apply text-xl font-normal;
+  }
+  
+  /* Subtle link styling */
+  a {
+    @apply transition-colors duration-200;
+  }
+  
+  /* Smooth scrolling */
+  html {
+    scroll-behavior: smooth;
+  }
+  
+  /* Selection color */
+  ::selection {
+    background-color: oklch(0.85 0.06 250 / 0.3);
+  }
+}
+
+/* Custom scrollbar - elegant minimal */
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: oklch(0.75 0.01 250) transparent;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background-color: oklch(0.75 0.01 250);
+    border-radius: 3px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background-color: oklch(0.65 0.01 250);
+  }
+  
+  .fade-in {
+    animation: fadeIn 0.4s ease-out;
+  }
+  
+  .slide-up {
+    animation: slideUp 0.5s ease-out;
+  }
+  
+  .slide-in-right {
+    animation: slideInRight 0.4s ease-out;
+  }
+  
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  
+  @keyframes slideUp {
+    from { 
+      opacity: 0; 
+      transform: translateY(20px); 
+    }
+    to { 
+      opacity: 1; 
+      transform: translateY(0); 
+    }
+  }
+  
+  @keyframes slideInRight {
+    from { 
+      opacity: 0; 
+      transform: translateX(-20px); 
+    }
+    to { 
+      opacity: 1; 
+      transform: translateX(0); 
+    }
+  }
+}
+
+/* Components */
+@layer components {
+  .academic-card {
+    @apply bg-card border border-border rounded-lg p-6 transition-all duration-300;
+    box-shadow: 0 1px 3px oklch(0 0 0 / 0.02), 0 1px 2px oklch(0 0 0 / 0.03);
+  }
+  
+  .academic-card:hover {
+    box-shadow: 0 4px 12px oklch(0 0 0 / 0.04), 0 2px 4px oklch(0 0 0 / 0.02);
+  }
+  
+  .section-divider {
+    @apply w-16 h-0.5 bg-primary/30 my-8;
+  }
+  
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+/* Global fix for all dropdown/select content */
+[role="listbox"],
+[role="option"],
+[data-radix-popper-content-wrapper] > div,
+[data-radix-select-content],
+[data-radix-select-viewport],
+[data-radix-popper-content-wrapper] {
+  background-color: var(--dropdown-bg) !important;
+  background: var(--dropdown-bg) !important;
+}
+
+[role="option"]:hover,
+[data-radix-select-item]:hover,
+[data-radix-select-item][data-highlighted] {
+  background-color: oklch(0.94 0.01 250) !important;
+}

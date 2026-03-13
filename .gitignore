@@ -1,0 +1,80 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+!.env.example
+!PubMiner/.env.example
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+local-*
+.claude
+.z-ai-config
+dev.log
+test
+prompt
+
+server.log
+# Skills directory
+/skills/
+
+backup/
+
+# local frontend build/runtime files
+node_modules/
+.next/
+*.tsbuildinfo
+
+# local editor / helper state
+.arts/
+.zscripts/
+
+# local data and generated outputs
+db/*.db
+download/
+output/
+PubMiner/download/
+PubMiner/output/
+PubMiner/checkpoints/
+
+# python local runtime files
+__pycache__/
+*.py[cod]
+PubMiner/.venv/
+PubMiner/.env
+PubMiner/api_server.log
+PubMiner/pubminer.egg-info/

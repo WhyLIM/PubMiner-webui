@@ -1,0 +1,48 @@
+# Custom Fields Configuration
+# ============================
+# Define domain-specific fields for extraction
+# This example is for aging biomarker research
+
+fields:
+  - name: "biomarker_name"
+    description: "文章中研究的生物标志物名称"
+    type: "string"
+
+  - name: "biomarker_type"
+    description: "属于单个生物标志物还是组合生物标志物"
+    type: "enum"
+    values: ["Single", "Composite", "Panel", "Unknown"]
+
+  - name: "biomarker_category"
+    description: "生物标志物的分子分类"
+    type: "enum"
+    values: ["Protein", "DNA", "RNA", "Metabolite", "Epigenetic", "Cellular", "Other"]
+
+  - name: "population_ethnicity"
+    description: "研究样本人群的种族/族裔"
+    type: "string"
+
+  - name: "gender_ratio"
+    description: "研究样本的男女比例（如 'Male: 45%, Female: 55%'）"
+    type: "string"
+
+  - name: "biomarker_desc"
+    description: "关于该生物标志物的具体描述和研究发现"
+    type: "string"
+
+  - name: "measurement_method"
+    description: "生物标志物的测量方法（如ELISA、qPCR等）"
+    type: "string"
+
+  - name: "validation_status"
+    description: "是否经过独立队列验证"
+    type: "enum"
+    values: ["Validated", "Not validated", "Partially validated"]
+
+# Additional instructions for the LLM (appended to system prompt)
+additional_instructions: |
+  对于衰老生物标志物研究，请特别注意：
+  1. 标志物的具体测量方法和单位
+  2. 标志物与衰老的关联强度及相关系数
+  3. 是否经过独立队列验证及验证结果
+  4. 标志物的临床应用潜力

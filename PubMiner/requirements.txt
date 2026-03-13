@@ -1,0 +1,30 @@
+# Core dependencies
+aiohttp>=3.9.0
+
+# NCBI interaction
+biopython>=1.81
+
+# Data processing
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+pandas>=2.0.0
+
+# LLM API
+zhipuai>=2.0.0
+
+# CLI & display
+rich>=13.0.0
+
+# Configuration
+pyyaml>=6.0
+
+# API Server
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+
+# Optional: faster JSON processing
+# orjson>=3.9.0
+
+# Optional: Excel export
+# openpyxl>=3.1.0
