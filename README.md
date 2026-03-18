@@ -154,6 +154,30 @@ This project has already been improved beyond the initial scaffold. Notable chan
 └─ README.md
 ```
 
+## Workspace Conventions
+
+Use the root directories with the following intent:
+
+- Source code
+  - `src/` for the Next.js frontend
+  - `PubMiner/` for the FastAPI backend and Python package
+  - `prisma/` for database schema and Prisma metadata
+  - `public/` for frontend static assets
+- Documentation and examples
+  - `docs/` for example inputs, notes, and future project docs
+- Runtime artifacts
+  - `download/` for PMC BioC cache and OA PDF cache
+  - `output/` for exported CSV files and checkpoints
+  - `db/` for local SQLite files when needed
+- Local machine only
+  - `.venv/`, `.env.local`, `.tmp/`, and local log files are environment-specific and should not be treated as source files
+
+When adding new files, prefer:
+
+- `docs/` for sample inputs, notes, or operational docs
+- `src/` or `PubMiner/` for code that is part of the product
+- `download/`, `output/`, or `db/` only for generated runtime data
+
 ## Setup
 
 ### 1. Frontend
