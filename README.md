@@ -53,7 +53,7 @@ Main backend areas:
 - `PubMiner/pubminer/fetcher/`
   PubMed search and metadata parsing
 - `PubMiner/pubminer/downloader/`
-  PMC full-text download, parsing, fallback logic, and cache
+  PMC full-text download, OA PDF resolution, parsing, fallback logic, and cache
 - `PubMiner/pubminer/extractor/`
   LLM extraction client and schema generation
 - `PubMiner/pubminer/exporter/`
@@ -208,6 +208,8 @@ Important sections:
 - `download`
 - `extraction`
 - `output`
+- `checkpoint`
+- `oa_pdf`
 
 ## Security Note
 

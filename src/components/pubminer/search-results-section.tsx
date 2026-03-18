@@ -6,26 +6,30 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useAppStore } from "@/lib/store";
-import { searchPubMed } from "@/lib/api";
+import { downloadOAPdf, resolveOAPdf, searchPubMed, type OAPdfResolution } from "@/lib/api";
 import {
   BarChart3,
   CalendarDays,
   CheckSquare,
   ChevronLeft,
   ChevronRight,
+  Download,
   FileText,
   Layers3,
   LibraryBig,
   Loader2,
+  ShieldCheck,
   Square,
 } from "lucide-react";
 import { toast } from "sonner";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 const PAGE_SIZE = 10;
+const DEFAULT_UNPAYWALL_EMAIL = "1632787660@qq.com";
 
 export function SearchResultsSection() {
   const {
@@ -44,6 +48,10 @@ export function SearchResultsSection() {
   const [currentPage, setCurrentPage] = useState(1);
   const [expandedPmids, setExpandedPmids] = useState<string[]>([]);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [isResolvingOaPdf, setIsResolvingOaPdf] = useState(false);
+  const [downloadingPmid, setDownloadingPmid] = useState<string | null>(null);
+  const [oaPdfByPmid, setOaPdfByPmid] = useState<Record<string, OAPdfResolution>>({});
+  const [unpaywallEmail, setUnpaywallEmail] = useState(DEFAULT_UNPAYWALL_EMAIL);
 
   const filteredResults = useMemo(() => {
     return searchResults.filter((item) => {
@@ -215,6 +223,66 @@ export function SearchResultsSection() {
     }
   };
 
+  const handleResolveOaPdf = async () => {
+    try {
+      setIsResolvingOaPdf(true);
+      const results = await resolveOAPdf(
+        searchResults.map((item) => ({
+          pmid: item.pmid,
+          doi: item.doi,
+          pmcid: item.pmcid,
+          title: item.title,
+        })),
+        unpaywallEmail.trim() || undefined
+      );
+
+      setOaPdfByPmid((current) => {
+        const next = { ...current };
+        for (const result of results) {
+          next[result.pmid] = result;
+        }
+        return next;
+      });
+
+      const available = results.filter((item) => item.availability === "available").length;
+      toast.success(`OA PDF check finished: ${available}/${results.length} available`);
+    } catch (error) {
+      console.error("Resolve OA PDF error:", error);
+      toast.error("Failed to check OA PDF availability");
+    } finally {
+      setIsResolvingOaPdf(false);
+    }
+  };
+
+  const handleDownloadOaPdf = async (pmid: string) => {
+    const item = searchResults.find((entry) => entry.pmid === pmid);
+    if (!item) return;
+
+    try {
+      setDownloadingPmid(pmid);
+      const download = await downloadOAPdf({
+        pmid: item.pmid,
+        doi: item.doi,
+        pmcid: item.pmcid,
+        title: item.title,
+      }, unpaywallEmail.trim() || undefined);
+      const url = URL.createObjectURL(download.blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = download.filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      toast.success("OA PDF download started");
+    } catch (error) {
+      console.error("Download OA PDF error:", error);
+      toast.error("Failed to download OA PDF");
+    } finally {
+      setDownloadingPmid(null);
+    }
+  };
+
   if (searchResults.length === 0) {
     return null;
   }
@@ -365,17 +433,38 @@ export function SearchResultsSection() {
                   )}
                 </div>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-2"
-                onClick={() =>
-                  setSelectedSearchPmids(allResultsSelected ? [] : searchResults.map((item) => item.pmid))
-                }
-              >
-                {allResultsSelected ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
-                Select All
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <div className="min-w-[220px] flex-1">
+                  <Input
+                    type="email"
+                    value={unpaywallEmail}
+                    onChange={(event) => setUnpaywallEmail(event.target.value)}
+                    placeholder="Unpaywall email"
+                    className="h-9"
+                  />
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2"
+                  onClick={handleResolveOaPdf}
+                  disabled={isResolvingOaPdf}
+                >
+                  {isResolvingOaPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
+                  Check OA PDF
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2"
+                  onClick={() =>
+                    setSelectedSearchPmids(allResultsSelected ? [] : searchResults.map((item) => item.pmid))
+                  }
+                >
+                  {allResultsSelected ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
+                  Select All
+                </Button>
+              </div>
             </CardHeader>
 
             <CardContent className="min-w-0 overflow-hidden space-y-4">
@@ -383,6 +472,8 @@ export function SearchResultsSection() {
                 {paginatedResults.map((item) => {
                   const checked = selectedSearchPmids.includes(item.pmid);
                   const isExpanded = expandedPmids.includes(item.pmid);
+                  const oaPdf = oaPdfByPmid[item.pmid];
+                  const canDownloadOa = oaPdf?.availability === "available" && Boolean(oaPdf.best_candidate?.pdf_url);
 
                   return (
                     <div
@@ -431,12 +522,49 @@ export function SearchResultsSection() {
                               <Badge variant={item.hasFullText ? "default" : "outline"} className="font-normal">
                                 {item.hasFullText ? "PMC Full Text" : "Metadata Only"}
                               </Badge>
+                              {oaPdf && (
+                                <Badge variant={canDownloadOa ? "default" : "outline"} className="font-normal">
+                                  {canDownloadOa ? "OA PDF Available" : "No OA PDF"}
+                                </Badge>
+                              )}
                             </div>
                           </div>
 
                           <div className="truncate text-sm text-muted-foreground">
                             {item.authors.length > 0 ? item.authors.join(", ") : "No authors available"}
                           </div>
+
+                          {oaPdf && (
+                            <div className="rounded-xl border border-border/60 bg-muted/20 p-3 text-sm">
+                              <div className="flex flex-wrap items-center justify-between gap-3">
+                                <div className="space-y-1 text-muted-foreground">
+                                  <div className="font-medium text-foreground">Legal OA PDF</div>
+                                  <div>{oaPdf.reason}</div>
+                                  {oaPdf.best_candidate && (
+                                    <div className="flex flex-wrap gap-3 text-xs">
+                                      <span>Source: {oaPdf.best_candidate.source}</span>
+                                      {oaPdf.best_candidate.host_type && <span>Host: {oaPdf.best_candidate.host_type}</span>}
+                                      {oaPdf.best_candidate.license && <span>License: {oaPdf.best_candidate.license}</span>}
+                                    </div>
+                                  )}
+                                </div>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="gap-2"
+                                  disabled={!canDownloadOa || downloadingPmid === item.pmid}
+                                  onClick={() => handleDownloadOaPdf(item.pmid)}
+                                >
+                                  {downloadingPmid === item.pmid ? (
+                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                  ) : (
+                                    <Download className="w-4 h-4" />
+                                  )}
+                                  Download OA PDF
+                                </Button>
+                              </div>
+                            </div>
+                          )}
 
                           {(item.firstAuthor || item.affiliation || item.publicationStatus) && (
                             <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">

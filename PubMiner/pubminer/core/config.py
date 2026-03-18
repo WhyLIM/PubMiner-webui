@@ -57,6 +57,7 @@ class DownloadConfig(BaseSettings):
         default=["ABSTRACT", "INTRO", "METHODS", "RESULTS", "DISCUSSION", "CONCLUSION"],
         description="Sections to keep"
     )
+    cache_dir: str = Field("../download/pmc_cache", description="PMC BioC cache directory")
     timeout: int = Field(30, description="Request timeout in seconds")
     max_retries: int = Field(3, description="Maximum retry attempts")
 
@@ -87,6 +88,23 @@ class CheckpointConfig(BaseSettings):
     auto_resume: bool = Field(True, description="Auto resume interrupted tasks")
 
 
+class OAPdfConfig(BaseSettings):
+    """Open-access PDF resolution and download configuration."""
+
+    enabled: bool = Field(True, description="Enable OA PDF features")
+    prefer_pmc: bool = Field(True, description="Prefer PMC candidates when available")
+    strict_oa: bool = Field(True, description="Only use legal OA sources")
+    cache_dir: str = Field("./download/pdf_cache", description="Local PDF cache directory")
+    timeout: int = Field(30, description="Request timeout in seconds")
+    max_retries: int = Field(3, description="Maximum retry attempts")
+    cache_only_when_license_known: bool = Field(
+        True, description="Only mark downloads cache-safe when a license is known"
+    )
+    enable_pmc: bool = Field(True, description="Use PMCID-derived PMC PDF candidates")
+    enable_unpaywall: bool = Field(True, description="Use Unpaywall DOI lookups")
+    unpaywall_email: Optional[str] = Field(None, description="Email required for Unpaywall API usage")
+
+
 class Config(BaseSettings):
     """Main configuration class."""
 
@@ -97,6 +115,7 @@ class Config(BaseSettings):
     extraction: ExtractionConfig = Field(default_factory=ExtractionConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
     checkpoint: CheckpointConfig = Field(default_factory=CheckpointConfig)
+    oa_pdf: OAPdfConfig = Field(default_factory=OAPdfConfig)
 
     model_config = SettingsConfigDict(
         env_nested_delimiter="__",
@@ -108,6 +127,7 @@ class Config(BaseSettings):
     def from_yaml(cls, path: str) -> "Config":
         """Load configuration from YAML file with environment variable substitution."""
         yaml_path = Path(path)
+        project_dir = yaml_path.parent.parent
 
         if not yaml_path.exists():
             raise FileNotFoundError(f"Configuration file not found: {path}")
@@ -123,6 +143,7 @@ class Config(BaseSettings):
         content = re.sub(r"\$\{(\w+)\}", substitute_env, content)
 
         config_dict = yaml.safe_load(content)
+        cls._resolve_relative_paths(config_dict, project_dir)
 
         # Handle nested configuration
         return cls(
@@ -133,9 +154,29 @@ class Config(BaseSettings):
             extraction=ExtractionConfig(**config_dict.get("extraction", {})),
             output=OutputConfig(**config_dict.get("output", {})),
             checkpoint=CheckpointConfig(**config_dict.get("checkpoint", {})),
+            oa_pdf=OAPdfConfig(**config_dict.get("oa_pdf", {})),
         )
+
+    @staticmethod
+    def _resolve_relative_paths(config_dict: dict, project_dir: Path) -> None:
+        """Resolve configured runtime paths relative to the backend project directory."""
+        for section, key in (
+            ("download", "cache_dir"),
+            ("output", "directory"),
+            ("checkpoint", "directory"),
+            ("oa_pdf", "cache_dir"),
+        ):
+            value = config_dict.get(section, {}).get(key)
+            if not value:
+                continue
+
+            resolved = Path(value)
+            if not resolved.is_absolute():
+                config_dict[section][key] = str((project_dir / resolved).resolve())
 
     def ensure_directories(self):
         """Ensure output and checkpoint directories exist."""
+        Path(self.download.cache_dir).mkdir(parents=True, exist_ok=True)
         Path(self.output.directory).mkdir(parents=True, exist_ok=True)
         Path(self.checkpoint.directory).mkdir(parents=True, exist_ok=True)
+        Path(self.oa_pdf.cache_dir).mkdir(parents=True, exist_ok=True)

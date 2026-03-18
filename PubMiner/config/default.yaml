@@ -35,6 +35,7 @@ download:
     - "RESULTS"
     - "DISCUSSION"
     - "CONCLUSION"
+  cache_dir: "../download/pmc_cache"    # Keep runtime caches at the workspace root
   timeout: 30                           # Request timeout (seconds)
   max_retries: 3
 
@@ -47,7 +48,7 @@ extraction:
 
 # Output Configuration
 output:
-  directory: "./output"
+  directory: "../output"
   format: "csv"
   include_abstract: false
   filename_prefix: "pubminer_result"
@@ -55,5 +56,18 @@ output:
 # Checkpoint/Resume Configuration
 checkpoint:
   enabled: true
-  directory: "./output/checkpoints"
+  directory: "../output/checkpoints"
   auto_resume: true
+
+# Legal Open Access PDF Configuration
+oa_pdf:
+  enabled: true
+  prefer_pmc: true
+  strict_oa: true
+  cache_dir: "../download/pdf_cache"
+  timeout: 30
+  max_retries: 3
+  cache_only_when_license_known: true
+  enable_pmc: true
+  enable_unpaywall: true
+  unpaywall_email: "${UNPAYWALL_EMAIL}"

@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from pubminer.core.config import Config
 from pubminer.fetcher.pubmed_client import AsyncPubMedClient
 from pubminer.downloader.pmc_bioc import BioCAPIClient
+from pubminer.downloader.oa_pdf import OAPdfResolver
 from pubminer.extractor.zhipu_client import ZhipuExtractor
 from pubminer.extractor.schemas.base_info import BaseExtractionModel
 from pubminer.extractor.schemas.custom import CustomFieldDefinition, DynamicSchemaBuilder
@@ -86,6 +87,23 @@ class ExtractionRequest(BaseModel):
     pmids: List[str]
     custom_fields: Optional[List[CustomFieldPayload]] = None
     fetch_citations: bool = False  # Whether to fetch citation metadata
+
+
+class OAPdfArticleRequest(BaseModel):
+    pmid: str
+    doi: Optional[str] = None
+    pmcid: Optional[str] = None
+    title: Optional[str] = None
+
+
+class OAPdfResolveRequest(BaseModel):
+    articles: List[OAPdfArticleRequest]
+    unpaywall_email: Optional[str] = None
+
+
+class OAPdfDownloadRequest(BaseModel):
+    article: OAPdfArticleRequest
+    unpaywall_email: Optional[str] = None
 
 
 class TaskStatus(BaseModel):
@@ -167,12 +185,28 @@ def apply_citation_data(
         metadata.references = data.get("references", [])
 
 
+def build_oa_pdf_resolver(unpaywall_email: Optional[str] = None) -> OAPdfResolver:
+    """Create a resolver using the active configuration."""
+    return OAPdfResolver(
+        timeout=config.oa_pdf.timeout,
+        max_retries=config.oa_pdf.max_retries,
+        prefer_pmc=config.oa_pdf.prefer_pmc,
+        strict_oa=config.oa_pdf.strict_oa,
+        cache_dir=config.oa_pdf.cache_dir,
+        cache_only_when_license_known=config.oa_pdf.cache_only_when_license_known,
+        unpaywall_email=unpaywall_email or config.oa_pdf.unpaywall_email,
+        enable_pmc=config.oa_pdf.enable_pmc,
+        enable_unpaywall=config.oa_pdf.enable_unpaywall,
+    )
+
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize configuration on startup"""
     global config
     config_path = Path(__file__).parent / "config" / "default.yaml"
     config = Config.from_yaml(str(config_path))
+    config.ensure_directories()
     logger.info("PubMiner API server started")
 
 
@@ -275,6 +309,57 @@ async def fetch_metadata(request: PMIDRequest):
 
     except Exception as e:
         logger.error(f"Fetch metadata error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/resolve-oa-pdf")
+async def resolve_oa_pdf(request: OAPdfResolveRequest):
+    """Resolve legal OA PDF candidates for the requested articles."""
+    if not config.oa_pdf.enabled:
+        raise HTTPException(status_code=400, detail="OA PDF feature is disabled")
+
+    try:
+        resolver = build_oa_pdf_resolver(request.unpaywall_email)
+        resolutions = await resolver.resolve_many([article.model_dump() for article in request.articles])
+        return {
+            "success": True,
+            "results": [resolution.model_dump() for resolution in resolutions],
+        }
+    except Exception as e:
+        logger.error(f"OA PDF resolve error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/download-oa-pdf")
+async def download_oa_pdf(request: OAPdfDownloadRequest):
+    """Download the best legal OA PDF for an article and return the file."""
+    if not config.oa_pdf.enabled:
+        raise HTTPException(status_code=400, detail="OA PDF feature is disabled")
+
+    try:
+        resolver = build_oa_pdf_resolver(request.unpaywall_email)
+        record = await resolver.download_best(request.article.model_dump())
+        if record.status != "downloaded" or not record.local_path:
+            raise HTTPException(status_code=404, detail=record.error or "No OA PDF was downloaded")
+
+        file_path = Path(record.local_path)
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="Downloaded file was not found on disk")
+
+        return FileResponse(
+            path=file_path,
+            media_type="application/pdf",
+            filename=record.filename or file_path.name,
+            headers={
+                "X-OA-PDF-Source": record.source,
+                "X-OA-PDF-License": record.license or "",
+                "X-OA-PDF-Cached": str(record.cached).lower(),
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"OA PDF download error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -386,7 +471,9 @@ async def run_extraction_task(
         # Download full text
         downloader = BioCAPIClient(
             keep_sections=config.download.sections,
-            timeout=config.download.timeout
+            timeout=config.download.timeout,
+            max_retries=config.download.max_retries,
+            cache_dir=config.download.cache_dir,
         )
 
         # Extract PMC IDs from metadata

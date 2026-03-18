@@ -1,4 +1,17 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+async function extractErrorMessage(response: Response, fallback: string): Promise<string> {
+  try {
+    const data = await response.json();
+    if (typeof data?.detail === "string" && data.detail) {
+      return data.detail;
+    }
+  } catch {
+    // Ignore JSON parse failures and use the fallback.
+  }
+
+  return fallback;
+}
 
 export interface SearchRequest {
   query: string;
@@ -21,6 +34,30 @@ export interface SearchResult {
   abstract?: string;
   hasFullText: boolean;
   pmcid?: string;
+}
+
+export interface OAPdfCandidate {
+  source: "pmc" | "unpaywall";
+  pdf_url?: string;
+  landing_page_url?: string;
+  license?: string;
+  host_type?: "publisher" | "repository";
+  version?: string;
+  evidence: string;
+  can_download: boolean;
+  can_cache: boolean;
+  score: number;
+}
+
+export interface OAPdfResolution {
+  pmid: string;
+  doi?: string | null;
+  pmcid?: string | null;
+  availability: "available" | "unavailable" | "ambiguous";
+  best_candidate?: OAPdfCandidate | null;
+  candidates: OAPdfCandidate[];
+  reason: string;
+  resolved_at: string;
 }
 
 export interface SearchResponse {
@@ -133,6 +170,11 @@ export interface ResultPreviewResponse {
   total_rows: number;
 }
 
+export interface ResolveOAPdfResponse {
+  success: boolean;
+  results: OAPdfResolution[];
+}
+
 export async function searchPubMed(request: SearchRequest): Promise<SearchResponse> {
   const response = await fetch(`${API_BASE_URL}/api/search`, {
     method: 'POST',
@@ -242,4 +284,54 @@ export async function getResultPreview(
   }
 
   return response.json();
+}
+
+export async function resolveOAPdf(articles: Array<{
+  pmid: string;
+  doi?: string;
+  pmcid?: string;
+  title?: string;
+}>, unpaywallEmail?: string): Promise<OAPdfResolution[]> {
+  const response = await fetch(`${API_BASE_URL}/api/resolve-oa-pdf`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ articles, unpaywall_email: unpaywallEmail }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await extractErrorMessage(response, `OA PDF resolve failed: ${response.statusText}`));
+  }
+
+  const data: ResolveOAPdfResponse = await response.json();
+  return data.results;
+}
+
+export async function downloadOAPdf(article: {
+  pmid: string;
+  doi?: string;
+  pmcid?: string;
+  title?: string;
+}, unpaywallEmail?: string): Promise<DownloadResult> {
+  const response = await fetch(`${API_BASE_URL}/api/download-oa-pdf`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ article, unpaywall_email: unpaywallEmail }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await extractErrorMessage(response, `Failed to download OA PDF: ${response.statusText}`));
+  }
+
+  const blob = await response.blob();
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const matched = disposition.match(/filename="?([^"]+)"?/i);
+
+  return {
+    blob,
+    filename: matched?.[1] || `${article.pmid}.pdf`,
+  };
 }

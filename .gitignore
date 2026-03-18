@@ -62,6 +62,9 @@ node_modules/
 # local editor / helper state
 .arts/
 .zscripts/
+.tmp/
+.venv/
+pubminer_*.log
 
 # local data and generated outputs
 db/*.db
