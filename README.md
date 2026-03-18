@@ -147,8 +147,9 @@ This project has already been improved beyond the initial scaffold. Notable chan
 │  ├─ api_server.py
 │  ├─ config/
 │  └─ pubminer/
-├─ download/                    Downloaded and cached PMC content
-├─ output/                      Exported CSV files
+├─ docs/                        Notes and example inputs
+├─ download/                    Downloaded and cached PMC/OA PDF content
+├─ output/                      Exported CSV files and checkpoints
 ├─ db/                          Local data and support files
 └─ README.md
 ```
@@ -210,6 +211,10 @@ Important sections:
 - `output`
 - `checkpoint`
 - `oa_pdf`
+
+Example PMIDs for quick manual testing live in:
+
+- `docs/examples/test_pmids.txt`
 
 ## Security Note
 
