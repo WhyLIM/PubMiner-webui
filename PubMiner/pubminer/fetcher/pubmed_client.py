@@ -44,10 +44,13 @@ class AsyncPubMedClient:
         """
         Entrez.email = email
         Entrez.tool = tool_name
+        self.api_key = api_key
+        self.rate_limit_without_key = rate_limit
+        self.rate_limit_with_key = 0.1
 
         if api_key:
             Entrez.api_key = api_key
-            self.rate_limit = 0.1  # 10 req/s with key
+            self.rate_limit = self.rate_limit_with_key  # 10 req/s with key
         else:
             self.rate_limit = rate_limit
 
@@ -85,6 +88,14 @@ class AsyncPubMedClient:
                 self._last_request_time = asyncio.get_event_loop().time()
                 return result
             except Exception as e:
+                if self.api_key and "HTTP Error 400" in str(e):
+                    logger.warning("Entrez request failed with API key; retrying without API key")
+                    self.api_key = None
+                    Entrez.api_key = None
+                    self.rate_limit = self.rate_limit_without_key
+                    result = await asyncio.to_thread(func, *args, **kwargs)
+                    self._last_request_time = asyncio.get_event_loop().time()
+                    return result
                 logger.error(f"Entrez API error: {e}")
                 raise PubMedAPIError(str(e))
 

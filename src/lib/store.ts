@@ -4,7 +4,7 @@ export interface Task {
   id: string;
   query?: string;
   pmids?: string[];
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'paused';
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'paused' | 'partial';
   progress: number;
   total: number;
   completed: number;
@@ -40,6 +40,24 @@ export interface Task {
     cited_by_total: number;
     references_total: number;
   };
+  extractionReport?: {
+    attempted: number;
+    cached_hits: number;
+    fresh_runs: number;
+    success: number;
+    failed: number;
+  };
+  chunkReport?: Array<{
+    chunk_index: number;
+    article_count: number;
+    status: string;
+    fulltext_downloaded: number;
+    extraction_success: number;
+    extraction_failed: number;
+    cached_hits: number;
+    pmids: string[];
+    message: string;
+  }>;
   articleReport?: Array<{
     pmid: string;
     pmcid?: string;
@@ -47,7 +65,9 @@ export interface Task {
     journal?: string;
     year?: string | number | null;
     has_fulltext: boolean;
+    citation_status?: string;
     fulltext_status: string;
+    oa_pdf_status?: string;
     extraction_status: string;
     result_status: string;
     error?: string;

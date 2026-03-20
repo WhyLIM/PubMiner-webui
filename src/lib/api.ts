@@ -108,6 +108,7 @@ export interface ExtractionResponse {
   success: boolean;
   task_id: string;
   message: string;
+  article_count?: number;
 }
 
 export interface TaskStatus {
@@ -142,6 +143,24 @@ export interface TaskStatus {
     cited_by_total: number;
     references_total: number;
   };
+  extraction_report?: {
+    attempted: number;
+    cached_hits: number;
+    fresh_runs: number;
+    success: number;
+    failed: number;
+  };
+  chunk_report?: Array<{
+    chunk_index: number;
+    article_count: number;
+    status: string;
+    fulltext_downloaded: number;
+    extraction_success: number;
+    extraction_failed: number;
+    cached_hits: number;
+    pmids: string[];
+    message: string;
+  }>;
   article_report?: Array<{
     pmid: string;
     pmcid?: string;
@@ -149,7 +168,9 @@ export interface TaskStatus {
     journal?: string;
     year?: string | number | null;
     has_fulltext: boolean;
+    citation_status?: string;
     fulltext_status: string;
+    oa_pdf_status?: string;
     extraction_status: string;
     result_status: string;
     error?: string;
@@ -202,6 +223,28 @@ export async function startExtraction(request: ExtractionRequest): Promise<Extra
 
   if (!response.ok) {
     throw new Error(`Extraction failed: ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+export async function retryTaskArticles(
+  taskId: string,
+  request: {
+    pmids?: string[];
+    mode?: "failed" | "incomplete" | "all";
+  }
+): Promise<ExtractionResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/tasks/${taskId}/retry`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    throw new Error(await extractErrorMessage(response, `Retry failed: ${response.statusText}`));
   }
 
   return response.json();
@@ -333,5 +376,36 @@ export async function downloadOAPdf(article: {
   return {
     blob,
     filename: matched?.[1] || `${article.pmid}.pdf`,
+  };
+}
+
+export async function downloadOAPdfs(
+  articles: Array<{
+    pmid: string;
+    doi?: string;
+    pmcid?: string;
+    title?: string;
+  }>,
+  unpaywallEmail?: string
+): Promise<DownloadResult> {
+  const response = await fetch(`${API_BASE_URL}/api/download-oa-pdfs`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ articles, unpaywall_email: unpaywallEmail }),
+  });
+
+  if (!response.ok) {
+    throw new Error(await extractErrorMessage(response, `Failed to batch download OA PDFs: ${response.statusText}`));
+  }
+
+  const blob = await response.blob();
+  const disposition = response.headers.get("Content-Disposition") || "";
+  const matched = disposition.match(/filename="?([^"]+)"?/i);
+
+  return {
+    blob,
+    filename: matched?.[1] || "oa_pdfs.zip",
   };
 }

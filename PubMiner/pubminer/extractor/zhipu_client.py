@@ -98,6 +98,17 @@ class ZhipuExtractor:
 
         logger.info(f"Zhipu extractor initialized (model={model}, coding_plan={use_coding_plan})")
 
+    def _is_auth_error(self, error: Exception) -> bool:
+        """Detect API key or token authentication failures."""
+        message = str(error)
+        lowered = message.lower()
+        return (
+            "401" in lowered
+            or "令牌已过期" in message
+            or "验证不正确" in message
+            or "token" in lowered and ("expired" in lowered or "invalid" in lowered)
+        )
+
     def _build_system_prompt(
         self,
         schema_model: Type[BaseModel],
@@ -382,6 +393,9 @@ Remember:
                     pass
 
             except Exception as e:
+                if self._is_auth_error(e):
+                    logger.error(f"Authentication error for {pmid}: {e}")
+                    raise LLMExtractionError("Zhipu API authentication failed. Check ZHIPU_API_KEY.") from e
                 last_error = str(e)
                 logger.error(f"Extraction error for {pmid} (attempt {attempt + 1}): {e}")
 

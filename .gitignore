@@ -68,6 +68,8 @@ pubminer_*.log
 
 # local data and generated outputs
 db/*.db
+db/*.db-shm
+db/*.db-wal
 download/
 output/
 PubMiner/download/

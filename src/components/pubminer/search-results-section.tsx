@@ -7,10 +7,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useAppStore } from "@/lib/store";
-import { downloadOAPdf, resolveOAPdf, searchPubMed, type OAPdfResolution } from "@/lib/api";
+import { downloadOAPdf, downloadOAPdfs, resolveOAPdf, searchPubMed, type OAPdfResolution } from "@/lib/api";
 import {
   BarChart3,
   CalendarDays,
@@ -30,6 +31,7 @@ import { toast } from "sonner";
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 const PAGE_SIZE = 10;
 const DEFAULT_UNPAYWALL_EMAIL = "1632787660@qq.com";
+const OA_PDF_RESOLVE_BATCH_SIZE = 10;
 
 export function SearchResultsSection() {
   const {
@@ -49,7 +51,10 @@ export function SearchResultsSection() {
   const [expandedPmids, setExpandedPmids] = useState<string[]>([]);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [isResolvingOaPdf, setIsResolvingOaPdf] = useState(false);
+  const [oaPdfProgress, setOaPdfProgress] = useState<number | null>(null);
+  const [oaPdfResolvedCount, setOaPdfResolvedCount] = useState(0);
   const [downloadingPmid, setDownloadingPmid] = useState<string | null>(null);
+  const [isBatchDownloadingOaPdf, setIsBatchDownloadingOaPdf] = useState(false);
   const [oaPdfByPmid, setOaPdfByPmid] = useState<Record<string, OAPdfResolution>>({});
   const [unpaywallEmail, setUnpaywallEmail] = useState(DEFAULT_UNPAYWALL_EMAIL);
 
@@ -182,6 +187,14 @@ export function SearchResultsSection() {
 
   const allResultsSelected =
     searchResults.length > 0 && selectedSearchPmids.length === searchResults.length;
+  const selectedAvailableOaPmids = useMemo(
+    () =>
+      selectedSearchPmids.filter((pmid) => {
+        const resolution = oaPdfByPmid[pmid];
+        return resolution?.availability === "available" && Boolean(resolution.best_candidate?.pdf_url);
+      }),
+    [oaPdfByPmid, selectedSearchPmids]
+  );
 
   const handleLoadMore = async () => {
     if (searchSession.source !== "query" || !searchSession.hasMore || isLoadingMore) {
@@ -226,23 +239,30 @@ export function SearchResultsSection() {
   const handleResolveOaPdf = async () => {
     try {
       setIsResolvingOaPdf(true);
-      const results = await resolveOAPdf(
-        searchResults.map((item) => ({
-          pmid: item.pmid,
-          doi: item.doi,
-          pmcid: item.pmcid,
-          title: item.title,
-        })),
-        unpaywallEmail.trim() || undefined
-      );
+      setOaPdfProgress(0);
+      setOaPdfResolvedCount(0);
+      const articles = searchResults.map((item) => ({
+        pmid: item.pmid,
+        doi: item.doi,
+        pmcid: item.pmcid,
+        title: item.title,
+      }));
+      const results: OAPdfResolution[] = [];
 
-      setOaPdfByPmid((current) => {
-        const next = { ...current };
-        for (const result of results) {
-          next[result.pmid] = result;
-        }
-        return next;
-      });
+      for (let index = 0; index < articles.length; index += OA_PDF_RESOLVE_BATCH_SIZE) {
+        const chunk = articles.slice(index, index + OA_PDF_RESOLVE_BATCH_SIZE);
+        const chunkResults = await resolveOAPdf(chunk, unpaywallEmail.trim() || undefined);
+        results.push(...chunkResults);
+        setOaPdfByPmid((current) => {
+          const next = { ...current };
+          for (const result of chunkResults) {
+            next[result.pmid] = result;
+          }
+          return next;
+        });
+        setOaPdfResolvedCount(Math.min(index + chunk.length, articles.length));
+        setOaPdfProgress((Math.min(index + chunk.length, articles.length) / articles.length) * 100);
+      }
 
       const available = results.filter((item) => item.availability === "available").length;
       toast.success(`OA PDF check finished: ${available}/${results.length} available`);
@@ -251,6 +271,10 @@ export function SearchResultsSection() {
       toast.error("Failed to check OA PDF availability");
     } finally {
       setIsResolvingOaPdf(false);
+      window.setTimeout(() => {
+        setOaPdfProgress(null);
+        setOaPdfResolvedCount(0);
+      }, 500);
     }
   };
 
@@ -280,6 +304,37 @@ export function SearchResultsSection() {
       toast.error("Failed to download OA PDF");
     } finally {
       setDownloadingPmid(null);
+    }
+  };
+
+  const handleBatchDownloadOaPdf = async () => {
+    if (selectedAvailableOaPmids.length === 0) return;
+
+    try {
+      setIsBatchDownloadingOaPdf(true);
+      const articles = searchResults
+        .filter((item) => selectedAvailableOaPmids.includes(item.pmid))
+        .map((item) => ({
+          pmid: item.pmid,
+          doi: item.doi,
+          pmcid: item.pmcid,
+          title: item.title,
+        }));
+      const download = await downloadOAPdfs(articles, unpaywallEmail.trim() || undefined);
+      const url = URL.createObjectURL(download.blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = download.filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      toast.success(`Packed ${selectedAvailableOaPmids.length} OA PDFs for download`);
+    } catch (error) {
+      console.error("Batch OA PDF download error:", error);
+      toast.error("Batch OA PDF download failed");
+    } finally {
+      setIsBatchDownloadingOaPdf(false);
     }
   };
 
@@ -457,6 +512,16 @@ export function SearchResultsSection() {
                   variant="outline"
                   size="sm"
                   className="gap-2"
+                  onClick={handleBatchDownloadOaPdf}
+                  disabled={isBatchDownloadingOaPdf || selectedAvailableOaPmids.length === 0}
+                >
+                  {isBatchDownloadingOaPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                  Batch Download OA PDF ({selectedAvailableOaPmids.length})
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2"
                   onClick={() =>
                     setSelectedSearchPmids(allResultsSelected ? [] : searchResults.map((item) => item.pmid))
                   }
@@ -468,6 +533,18 @@ export function SearchResultsSection() {
             </CardHeader>
 
             <CardContent className="min-w-0 overflow-hidden space-y-4">
+              {oaPdfProgress !== null && (
+                <div className="rounded-xl border border-sky-200/70 bg-sky-50/60 p-3">
+                  <div className="mb-2 flex items-center justify-between gap-3 text-sm">
+                    <span className="font-medium text-sky-900">Checking legal OA PDF availability</span>
+                    <span className="text-sky-700">
+                      {oaPdfResolvedCount}/{searchResults.length}
+                    </span>
+                  </div>
+                  <Progress value={oaPdfProgress} className="h-2" />
+                </div>
+              )}
+
               <div className="space-y-4">
                 {paginatedResults.map((item) => {
                   const checked = selectedSearchPmids.includes(item.pmid);
@@ -523,9 +600,15 @@ export function SearchResultsSection() {
                                 {item.hasFullText ? "PMC Full Text" : "Metadata Only"}
                               </Badge>
                               {oaPdf && (
-                                <Badge variant={canDownloadOa ? "default" : "outline"} className="font-normal">
+                                <span
+                                  className={`inline-flex rounded-full border px-3 py-1 text-xs font-medium tracking-wide shadow-sm ${
+                                    canDownloadOa
+                                      ? "border-sky-200 bg-sky-50 text-sky-900"
+                                      : "border-slate-200 bg-slate-50 text-slate-700"
+                                  }`}
+                                >
                                   {canDownloadOa ? "OA PDF Available" : "No OA PDF"}
-                                </Badge>
+                                </span>
                               )}
                             </div>
                           </div>

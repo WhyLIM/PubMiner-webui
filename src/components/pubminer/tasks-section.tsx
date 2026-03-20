@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -18,10 +19,11 @@ import {
   Clock,
   Loader2,
   Pause,
+  RotateCcw,
   XCircle,
 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
-import { getTaskStatus } from "@/lib/api";
+import { getTaskStatus, retryTaskArticles } from "@/lib/api";
 import { toast } from "sonner";
 
 const statusConfig = {
@@ -49,6 +51,12 @@ const statusConfig = {
     bg: "bg-gray-50",
     badge: "outline" as const,
   },
+  partial: {
+    icon: RotateCcw,
+    color: "text-amber-700",
+    bg: "bg-amber-50",
+    badge: "secondary" as const,
+  },
   failed: {
     icon: XCircle,
     color: "text-red-600",
@@ -60,7 +68,9 @@ const statusConfig = {
 export function TasksSection() {
   const [selectedTab, setSelectedTab] = useState("all");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
-  const { tasks, updateTask, setShowResults } = useAppStore();
+  const [retryingMode, setRetryingMode] = useState<"failed" | "incomplete" | null>(null);
+  const [selectedArticlePmids, setSelectedArticlePmids] = useState<string[]>([]);
+  const { tasks, updateTask, addTask, setShowResults } = useAppStore();
 
   useEffect(() => {
     const runningTasks = tasks.filter((t) => t.status === "running" || t.status === "pending");
@@ -81,12 +91,18 @@ export function TasksSection() {
             error: status.status === "failed" ? status.message : undefined,
             fullTextReport: status.fulltext_report,
             citationReport: status.citation_report,
+            extractionReport: status.extraction_report,
+            chunkReport: status.chunk_report,
             articleReport: status.article_report,
           });
 
           if (status.status === "completed" && status.result_file) {
             toast.success(`Task ${task.id} completed!`);
             setShowResults(true);
+          }
+
+          if (status.status === "partial") {
+            toast.error(`Task ${task.id} completed with partial failures.`);
           }
 
           if (status.status === "failed") {
@@ -107,7 +123,185 @@ export function TasksSection() {
   );
 
   const activeTask = filteredTasks.find((task) => task.id === selectedTaskId) ?? filteredTasks[0] ?? null;
+  const articleStatusSummary = useMemo(() => {
+    const summary = {
+      citationReady: 0,
+      fulltextReady: 0,
+      extractionSuccess: 0,
+      extractionFailed: 0,
+      incomplete: 0,
+    };
+
+    for (const article of activeTask?.articleReport ?? []) {
+      if (article.citation_status === "success") summary.citationReady += 1;
+      if (article.fulltext_status === "ready") summary.fulltextReady += 1;
+      if (article.extraction_status === "success") summary.extractionSuccess += 1;
+      if (article.extraction_status === "failed" || article.extraction_status === "missing") {
+        summary.extractionFailed += 1;
+      }
+      if (article.result_status !== "full_table") summary.incomplete += 1;
+    }
+
+    return summary;
+  }, [activeTask?.articleReport]);
+  const chunkStatusSummary = useMemo(() => {
+    const summary = {
+      completed: 0,
+      running: 0,
+      failed: 0,
+      pending: 0,
+      retryablePmids: [] as string[],
+    };
+
+    for (const chunk of activeTask?.chunkReport ?? []) {
+      if (chunk.status === "completed") summary.completed += 1;
+      else if (chunk.status === "running") summary.running += 1;
+      else if (chunk.status === "failed") {
+        summary.failed += 1;
+        summary.retryablePmids.push(...chunk.pmids);
+      } else {
+        summary.pending += 1;
+      }
+    }
+
+    summary.retryablePmids = Array.from(new Set(summary.retryablePmids));
+    return summary;
+  }, [activeTask?.chunkReport]);
+  const authIssueMessage = useMemo(() => {
+    const candidates = [
+      activeTask?.message,
+      activeTask?.error,
+      ...(activeTask?.articleReport?.map((article) => article.error).filter(Boolean) ?? []),
+    ].filter(Boolean) as string[];
+
+    return (
+      candidates.find((message) =>
+        message.includes("Zhipu API authentication failed") ||
+        message.includes("令牌已过期") ||
+        message.includes("验证不正确")
+      ) ?? null
+    );
+  }, [activeTask]);
+  const detectedAuthIssueMessage = useMemo(() => {
+    const candidates = [
+      activeTask?.message,
+      activeTask?.error,
+      ...(activeTask?.articleReport?.map((article) => article.error).filter(Boolean) ?? []),
+    ].filter(Boolean) as string[];
+
+    return (
+      candidates.find((message) =>
+        message.includes("Zhipu API authentication failed") ||
+        message.includes("401") ||
+        message.toLowerCase().includes("token")
+      ) ?? null
+    );
+  }, [activeTask]);
+  const llmProgress = useMemo(() => {
+    const attempted = activeTask?.extractionReport?.attempted ?? 0;
+    const success = activeTask?.extractionReport?.success ?? 0;
+    const failed = activeTask?.extractionReport?.failed ?? 0;
+    const total = Math.max(
+      activeTask?.fullTextReport?.downloaded ?? 0,
+      attempted
+    );
+
+    return {
+      total,
+      completed: success + failed,
+      percent: total > 0 ? ((success + failed) / total) * 100 : 0,
+    };
+  }, [activeTask]);
   const runningCount = tasks.filter((t) => t.status === "running").length;
+  const allSelected = activeTask?.articleReport?.length
+    ? activeTask.articleReport.every((article) => selectedArticlePmids.includes(article.pmid))
+    : false;
+
+  useEffect(() => {
+    setSelectedArticlePmids([]);
+  }, [activeTask?.id]);
+
+  const handleRetry = async (mode: "failed" | "incomplete") => {
+    if (!activeTask) return;
+
+    try {
+      setRetryingMode(mode);
+      const response = await retryTaskArticles(activeTask.id, { mode });
+      addTask({
+        id: response.task_id,
+        query: `${activeTask.query} (${mode} retry)`,
+        pmids: [],
+        status: "pending",
+        progress: 0,
+        total: response.article_count ?? 0,
+        completed: 0,
+        failed: 0,
+        createdAt: new Date().toISOString(),
+        message: response.message,
+      });
+      setSelectedTaskId(response.task_id);
+      toast.success(response.message);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to create retry task");
+    } finally {
+      setRetryingMode(null);
+    }
+  };
+
+  const handleRetrySelected = async () => {
+    if (!activeTask || selectedArticlePmids.length === 0) return;
+
+    try {
+      setRetryingMode("incomplete");
+      const response = await retryTaskArticles(activeTask.id, { pmids: selectedArticlePmids });
+      addTask({
+        id: response.task_id,
+        query: `${activeTask.query} (selected retry)`,
+        pmids: selectedArticlePmids,
+        status: "pending",
+        progress: 0,
+        total: response.article_count ?? selectedArticlePmids.length,
+        completed: 0,
+        failed: 0,
+        createdAt: new Date().toISOString(),
+        message: response.message,
+      });
+      setSelectedTaskId(response.task_id);
+      setSelectedArticlePmids([]);
+      toast.success(response.message);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to create selected retry task");
+    } finally {
+      setRetryingMode(null);
+    }
+  };
+
+  const handleRetryFailedChunks = async () => {
+    if (!activeTask || chunkStatusSummary.retryablePmids.length === 0) return;
+
+    try {
+      setRetryingMode("failed");
+      const response = await retryTaskArticles(activeTask.id, { pmids: chunkStatusSummary.retryablePmids });
+      addTask({
+        id: response.task_id,
+        query: `${activeTask.query} (failed chunks retry)`,
+        pmids: chunkStatusSummary.retryablePmids,
+        status: "pending",
+        progress: 0,
+        total: response.article_count ?? chunkStatusSummary.retryablePmids.length,
+        completed: 0,
+        failed: 0,
+        createdAt: new Date().toISOString(),
+        message: response.message,
+      });
+      setSelectedTaskId(response.task_id);
+      toast.success(response.message);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to retry failed chunks");
+    } finally {
+      setRetryingMode(null);
+    }
+  };
 
   const getFailureAction = (reason: string) => {
     switch (reason) {
@@ -255,9 +449,57 @@ export function TasksSection() {
                         Task ID: {activeTask.id}
                       </CardDescription>
                       <div className="text-sm text-muted-foreground">
-                        Created {new Date(activeTask.createdAt).toLocaleString()}
+                        <span className="break-all">Created {new Date(activeTask.createdAt).toLocaleString()}</span>
                       </div>
                     </div>
+                    {activeTask.articleReport && activeTask.articleReport.length > 0 && (
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleRetryFailedChunks}
+                          disabled={retryingMode !== null || chunkStatusSummary.retryablePmids.length === 0}
+                          className="gap-2"
+                        >
+                          <RotateCcw className="h-4 w-4" />
+                          Retry Failed Chunks
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleRetry("failed")}
+                          disabled={retryingMode !== null || articleStatusSummary.extractionFailed === 0}
+                          className="gap-2"
+                        >
+                          <RotateCcw className={`h-4 w-4 ${retryingMode === "failed" ? "animate-spin" : ""}`} />
+                          Retry Failed Articles
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleRetry("incomplete")}
+                          disabled={retryingMode !== null || articleStatusSummary.incomplete === 0}
+                          className="gap-2"
+                        >
+                          <RotateCcw className={`h-4 w-4 ${retryingMode === "incomplete" ? "animate-spin" : ""}`} />
+                          Retry Incomplete Articles
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleRetrySelected}
+                          disabled={retryingMode !== null || selectedArticlePmids.length === 0}
+                          className="gap-2"
+                        >
+                          <RotateCcw className="h-4 w-4" />
+                          Retry Selected ({selectedArticlePmids.length})
+                        </Button>
+                      </div>
+                    )}
                   </div>
 
                   <div className="grid gap-4 md:grid-cols-3">
@@ -274,7 +516,9 @@ export function TasksSection() {
                     <div className="rounded-xl border border-border/50 bg-background px-4 py-3">
                       <div className="text-xs text-muted-foreground">Current Stage</div>
                       <div className="mt-2 text-sm font-medium leading-6">
-                        {activeTask.message || "Waiting for updates"}
+                        <span className="break-words whitespace-pre-wrap">
+                          {activeTask.message || "Waiting for updates"}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -289,6 +533,232 @@ export function TasksSection() {
                 </CardHeader>
 
                 <CardContent className="space-y-6">
+                  {detectedAuthIssueMessage && (
+                    <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                      <span className="break-words whitespace-pre-wrap">
+                        Zhipu authentication issue detected: {detectedAuthIssueMessage}
+                      </span>
+                    </div>
+                  )}
+
+                  {activeTask.articleReport && activeTask.articleReport.length > 0 && (
+                    <div className="space-y-4">
+                      <div>
+                        <h3 className="text-sm font-medium">Article Stage Status</h3>
+                        <p className="text-sm text-muted-foreground">
+                          Fine-grained article progress that survives backend restarts.
+                        </p>
+                      </div>
+
+                      <div className="grid gap-4 md:grid-cols-5">
+                        <div className="rounded-xl border border-border/50 bg-background px-4 py-3">
+                          <div className="text-xs text-muted-foreground">Citation Ready</div>
+                          <div className="mt-2 text-xl font-semibold">{articleStatusSummary.citationReady}</div>
+                        </div>
+                        <div className="rounded-xl border border-border/50 bg-background px-4 py-3">
+                          <div className="text-xs text-muted-foreground">Full Text Ready</div>
+                          <div className="mt-2 text-xl font-semibold">{articleStatusSummary.fulltextReady}</div>
+                        </div>
+                        <div className="rounded-xl border border-border/50 bg-background px-4 py-3">
+                          <div className="text-xs text-muted-foreground">Extraction Success</div>
+                          <div className="mt-2 text-xl font-semibold">{articleStatusSummary.extractionSuccess}</div>
+                        </div>
+                        <div className="rounded-xl border border-border/50 bg-background px-4 py-3">
+                          <div className="text-xs text-muted-foreground">Extraction Failed</div>
+                          <div className="mt-2 text-xl font-semibold">{articleStatusSummary.extractionFailed}</div>
+                        </div>
+                        <div className="rounded-xl border border-border/50 bg-background px-4 py-3">
+                          <div className="text-xs text-muted-foreground">Incomplete</div>
+                          <div className="mt-2 text-xl font-semibold">{articleStatusSummary.incomplete}</div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-xl border border-border/50 bg-background p-4 overflow-auto">
+                        <div className="mb-3 flex min-w-0 flex-wrap items-center justify-between gap-3">
+                          <label className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
+                            <Checkbox
+                              checked={allSelected}
+                              onCheckedChange={(checked) => {
+                                setSelectedArticlePmids(
+                                  checked
+                                    ? activeTask.articleReport?.map((article) => article.pmid) ?? []
+                                    : []
+                                );
+                              }}
+                            />
+                            <span className="break-words">Select all visible articles</span>
+                          </label>
+                          {selectedArticlePmids.length > 0 && (
+                            <span className="break-words text-xs text-muted-foreground">
+                              {selectedArticlePmids.length} selected for retry
+                            </span>
+                          )}
+                        </div>
+                        <ScrollArea className="max-h-[280px] w-full pr-3">
+                          <div className="space-y-3">
+                            {activeTask.articleReport.map((article) => (
+                              <div key={article.pmid} className="min-w-0 rounded-lg border border-border/50 p-4 space-y-2">
+                                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                                  <Checkbox
+                                    checked={selectedArticlePmids.includes(article.pmid)}
+                                    onCheckedChange={(checked) => {
+                                      setSelectedArticlePmids((current) =>
+                                        checked
+                                          ? Array.from(new Set([...current, article.pmid]))
+                                          : current.filter((pmid) => pmid !== article.pmid)
+                                      );
+                                    }}
+                                  />
+                                  <span className="min-w-0 break-words font-medium">{article.title || article.pmid}</span>
+                                  <Badge variant="outline" className="font-normal">
+                                    PMID {article.pmid}
+                                  </Badge>
+                                  {article.pmcid && (
+                                    <Badge variant="outline" className="font-normal">
+                                      {article.pmcid}
+                                    </Badge>
+                                  )}
+                                </div>
+                                <div className="flex flex-wrap gap-2 text-xs">
+                                  <Badge variant="secondary" className="font-normal">
+                                    citation: {article.citation_status || "pending"}
+                                  </Badge>
+                                  <Badge variant="secondary" className="font-normal">
+                                    full text: {article.fulltext_status}
+                                  </Badge>
+                                  <Badge variant="secondary" className="font-normal">
+                                    oa pdf: {article.oa_pdf_status || "pending"}
+                                  </Badge>
+                                  <Badge variant="secondary" className="font-normal">
+                                    extraction: {article.extraction_status}
+                                  </Badge>
+                                  <Badge variant="outline" className="font-normal">
+                                    result: {article.result_status}
+                                  </Badge>
+                                </div>
+                                {article.error && (
+                                  <div className="break-words whitespace-pre-wrap text-sm text-muted-foreground">
+                                    {article.error}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </ScrollArea>
+                      </div>
+                    </div>
+                  )}
+
+                  {activeTask.extractionReport && (
+                    <div className="space-y-4">
+                      <div>
+                        <h3 className="text-sm font-medium">Extraction Cache Summary</h3>
+                        <p className="text-sm text-muted-foreground">
+                          How much LLM work was reused versus freshly executed.
+                        </p>
+                      </div>
+
+                      {llmProgress.total > 0 && (
+                        <div className="rounded-xl border border-amber-200/70 bg-amber-50/50 p-4">
+                          <div className="mb-2 flex items-center justify-between gap-3 text-sm">
+                            <span className="font-medium text-amber-900">LLM Parsing Progress</span>
+                            <span className="text-amber-800">
+                              {llmProgress.completed}/{llmProgress.total}
+                            </span>
+                          </div>
+                          <Progress value={llmProgress.percent} className="h-2" />
+                        </div>
+                      )}
+
+                      <div className="grid gap-4 md:grid-cols-5">
+                        <div className="rounded-xl border border-border/50 bg-background px-4 py-3">
+                          <div className="text-xs text-muted-foreground">Attempted</div>
+                          <div className="mt-2 text-xl font-semibold">{activeTask.extractionReport.attempted}</div>
+                        </div>
+                        <div className="rounded-xl border border-border/50 bg-background px-4 py-3">
+                          <div className="text-xs text-muted-foreground">Cache Hits</div>
+                          <div className="mt-2 text-xl font-semibold">{activeTask.extractionReport.cached_hits}</div>
+                        </div>
+                        <div className="rounded-xl border border-border/50 bg-background px-4 py-3">
+                          <div className="text-xs text-muted-foreground">Fresh Runs</div>
+                          <div className="mt-2 text-xl font-semibold">{activeTask.extractionReport.fresh_runs}</div>
+                        </div>
+                        <div className="rounded-xl border border-border/50 bg-background px-4 py-3">
+                          <div className="text-xs text-muted-foreground">Success</div>
+                          <div className="mt-2 text-xl font-semibold">{activeTask.extractionReport.success}</div>
+                        </div>
+                        <div className="rounded-xl border border-border/50 bg-background px-4 py-3">
+                          <div className="text-xs text-muted-foreground">Failed</div>
+                          <div className="mt-2 text-xl font-semibold">{activeTask.extractionReport.failed}</div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {activeTask.chunkReport && activeTask.chunkReport.length > 0 && (
+                    <div className="space-y-4">
+                      <div>
+                        <h3 className="text-sm font-medium">Chunk Progress</h3>
+                        <p className="text-sm text-muted-foreground">
+                          Batch-level progress for large runs, including cache reuse and extraction outcomes.
+                        </p>
+                      </div>
+
+                      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                        <div className="rounded-xl border border-border/50 bg-background px-4 py-3">
+                          <div className="text-xs text-muted-foreground">Completed</div>
+                          <div className="mt-2 text-xl font-semibold">{chunkStatusSummary.completed}</div>
+                        </div>
+                        <div className="rounded-xl border border-border/50 bg-background px-4 py-3">
+                          <div className="text-xs text-muted-foreground">Running</div>
+                          <div className="mt-2 text-xl font-semibold">{chunkStatusSummary.running}</div>
+                        </div>
+                        <div className="rounded-xl border border-border/50 bg-background px-4 py-3">
+                          <div className="text-xs text-muted-foreground">Failed</div>
+                          <div className="mt-2 text-xl font-semibold">{chunkStatusSummary.failed}</div>
+                        </div>
+                        <div className="rounded-xl border border-border/50 bg-background px-4 py-3">
+                          <div className="text-xs text-muted-foreground">Pending</div>
+                          <div className="mt-2 text-xl font-semibold">{chunkStatusSummary.pending}</div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-xl border border-border/50 bg-background p-4 min-w-0">
+                        <ScrollArea className="max-h-[280px] pr-3">
+                          <div className="space-y-3">
+                            {activeTask.chunkReport.map((chunk) => (
+                              <div
+                                key={`${activeTask.id}-chunk-${chunk.chunk_index}`}
+                                className="min-w-0 rounded-lg border border-border/50 p-4 space-y-3"
+                              >
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Badge variant="outline" className="font-normal">
+                                    Chunk {chunk.chunk_index}
+                                  </Badge>
+                                  <Badge variant="secondary" className="font-normal capitalize">
+                                    {chunk.status}
+                                  </Badge>
+                                  <span className="text-sm text-muted-foreground">
+                                    {chunk.article_count} articles
+                                  </span>
+                                </div>
+                                <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2 xl:grid-cols-4">
+                                  <div>full text: {chunk.fulltext_downloaded}</div>
+                                  <div>cache hits: {chunk.cached_hits}</div>
+                                  <div>success: {chunk.extraction_success}</div>
+                                  <div>failed: {chunk.extraction_failed}</div>
+                                </div>
+                                <div className="text-sm text-muted-foreground">
+                                  <span className="break-words whitespace-pre-wrap">{chunk.message}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </ScrollArea>
+                      </div>
+                    </div>
+                  )}
+
                   {activeTask.citationReport && (
                     <div className="space-y-4">
                       <div>

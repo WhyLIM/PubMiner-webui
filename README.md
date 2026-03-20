@@ -219,6 +219,16 @@ By default the backend runs on:
 
 - [http://localhost:8000](http://localhost:8000)
 
+If you start the backend this way, set `NEXT_PUBLIC_API_URL=http://localhost:8000` in [.env.local](/D:/Study/Project/PubMiner2/.env.local) before starting the Next.js frontend.
+
+From the project root you can also use:
+
+```powershell
+.\start_backend.ps1
+```
+
+This script always uses [\.venv\Scripts\python.exe](/D:/Study/Project/PubMiner2/.venv/Scripts/python.exe), starts [api_server.py](/D:/Study/Project/PubMiner2/PubMiner/api_server.py) from the correct backend directory, and warns if port `8000` is already occupied.
+
 ## Configuration
 
 Backend configuration lives in:

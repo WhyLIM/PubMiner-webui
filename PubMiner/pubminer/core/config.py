@@ -2,6 +2,7 @@
 
 import os
 import re
+import shlex
 from pathlib import Path
 from typing import Optional, List
 from pydantic import Field, field_validator
@@ -69,6 +70,7 @@ class ExtractionConfig(BaseSettings):
     custom_fields_file: Optional[str] = Field(None, description="Path to custom fields YAML")
     max_retries: int = Field(3, description="Validation retry attempts")
     concurrency: int = Field(5, ge=1, le=20, description="Concurrent extraction tasks")
+    task_chunk_size: int = Field(50, ge=1, le=500, description="Articles to process per extraction chunk")
 
 
 class OutputConfig(BaseSettings):
@@ -105,6 +107,12 @@ class OAPdfConfig(BaseSettings):
     unpaywall_email: Optional[str] = Field(None, description="Email required for Unpaywall API usage")
 
 
+class DatabaseConfig(BaseSettings):
+    """Local database configuration for persisted task state."""
+
+    path: str = Field("../db/pubminer_tasks.db", description="SQLite database path")
+
+
 class Config(BaseSettings):
     """Main configuration class."""
 
@@ -116,6 +124,7 @@ class Config(BaseSettings):
     output: OutputConfig = Field(default_factory=OutputConfig)
     checkpoint: CheckpointConfig = Field(default_factory=CheckpointConfig)
     oa_pdf: OAPdfConfig = Field(default_factory=OAPdfConfig)
+    database: DatabaseConfig = Field(default_factory=DatabaseConfig)
 
     model_config = SettingsConfigDict(
         env_nested_delimiter="__",
@@ -128,6 +137,7 @@ class Config(BaseSettings):
         """Load configuration from YAML file with environment variable substitution."""
         yaml_path = Path(path)
         project_dir = yaml_path.parent.parent
+        env_values = cls._load_env_overrides(project_dir)
 
         if not yaml_path.exists():
             raise FileNotFoundError(f"Configuration file not found: {path}")
@@ -138,7 +148,7 @@ class Config(BaseSettings):
         # Substitute environment variables: ${VAR_NAME} -> value
         def substitute_env(match):
             var_name = match.group(1)
-            return os.environ.get(var_name, match.group(0))
+            return os.environ.get(var_name, env_values.get(var_name, match.group(0)))
 
         content = re.sub(r"\$\{(\w+)\}", substitute_env, content)
 
@@ -155,7 +165,44 @@ class Config(BaseSettings):
             output=OutputConfig(**config_dict.get("output", {})),
             checkpoint=CheckpointConfig(**config_dict.get("checkpoint", {})),
             oa_pdf=OAPdfConfig(**config_dict.get("oa_pdf", {})),
+            database=DatabaseConfig(**config_dict.get("database", {})),
         )
+
+    @staticmethod
+    def _load_env_overrides(project_dir: Path) -> dict:
+        """Load env values from common local files without requiring shell export."""
+        env_paths = [
+            project_dir.parent / ".env.local",
+            project_dir.parent / ".env",
+            project_dir / ".env.local",
+            project_dir / ".env",
+        ]
+        values = {}
+
+        for env_path in env_paths:
+            if not env_path.exists():
+                continue
+
+            for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+                if not key:
+                    continue
+
+                if value and value[0] in {'"', "'"}:
+                    try:
+                        value = shlex.split(f"placeholder={value}")[0].split("=", 1)[1]
+                    except Exception:
+                        value = value.strip("\"'")
+
+                values[key] = value
+
+        return values
 
     @staticmethod
     def _resolve_relative_paths(config_dict: dict, project_dir: Path) -> None:
@@ -165,6 +212,7 @@ class Config(BaseSettings):
             ("output", "directory"),
             ("checkpoint", "directory"),
             ("oa_pdf", "cache_dir"),
+            ("database", "path"),
         ):
             value = config_dict.get(section, {}).get(key)
             if not value:
@@ -180,3 +228,4 @@ class Config(BaseSettings):
         Path(self.output.directory).mkdir(parents=True, exist_ok=True)
         Path(self.checkpoint.directory).mkdir(parents=True, exist_ok=True)
         Path(self.oa_pdf.cache_dir).mkdir(parents=True, exist_ok=True)
+        Path(self.database.path).parent.mkdir(parents=True, exist_ok=True)

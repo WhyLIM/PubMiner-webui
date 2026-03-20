@@ -45,6 +45,7 @@ extraction:
   custom_fields_file: null              # Path to custom fields YAML
   max_retries: 3                        # Retry on validation failures
   concurrency: 5                        # Parallel extractions
+  task_chunk_size: 50                   # Process large runs in smaller article chunks
 
 # Output Configuration
 output:
@@ -58,6 +59,10 @@ checkpoint:
   enabled: true
   directory: "../output/checkpoints"
   auto_resume: true
+
+# Local Task Database
+database:
+  path: "../db/pubminer_tasks.db"
 
 # Legal Open Access PDF Configuration
 oa_pdf:

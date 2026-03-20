@@ -177,6 +177,15 @@ class OAPdfResolver:
                 key=lambda item: item.score,
                 reverse=True,
             )
+            unique_candidates: List[OAPdfCandidate] = []
+            seen_urls = set()
+            for candidate in downloadable_candidates:
+                normalized_url = (candidate.pdf_url or "").strip()
+                if not normalized_url or normalized_url in seen_urls:
+                    continue
+                seen_urls.add(normalized_url)
+                unique_candidates.append(candidate)
+            downloadable_candidates = unique_candidates
 
             if not downloadable_candidates:
                 return OAPdfDownloadRecord(
