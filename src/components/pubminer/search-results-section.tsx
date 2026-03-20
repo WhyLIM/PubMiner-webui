@@ -1,13 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
-import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { useAppStore } from "@/lib/store";
@@ -30,8 +28,8 @@ import { toast } from "sonner";
 
 const ReactECharts = dynamic(() => import("echarts-for-react"), { ssr: false });
 const PAGE_SIZE = 10;
-const DEFAULT_UNPAYWALL_EMAIL = "1632787660@qq.com";
-const OA_PDF_RESOLVE_BATCH_SIZE = 10;
+const PILL_BASE_CLASS =
+  "inline-flex max-w-full truncate rounded-full border px-3 py-1 text-xs font-medium tracking-wide shadow-sm";
 
 export function SearchResultsSection() {
   const {
@@ -42,7 +40,11 @@ export function SearchResultsSection() {
     toggleSelectedSearchPmid,
     searchSession,
     setSearchSession,
+    oaPdfByPmid,
+    setOaPdfResolutions,
+    unpaywallEmail,
   } = useAppStore();
+  const autoResolveInFlight = useRef(false);
 
   const [fullTextOnly, setFullTextOnly] = useState(false);
   const [yearFilter, setYearFilter] = useState("all");
@@ -55,8 +57,6 @@ export function SearchResultsSection() {
   const [oaPdfResolvedCount, setOaPdfResolvedCount] = useState(0);
   const [downloadingPmid, setDownloadingPmid] = useState<string | null>(null);
   const [isBatchDownloadingOaPdf, setIsBatchDownloadingOaPdf] = useState(false);
-  const [oaPdfByPmid, setOaPdfByPmid] = useState<Record<string, OAPdfResolution>>({});
-  const [unpaywallEmail, setUnpaywallEmail] = useState(DEFAULT_UNPAYWALL_EMAIL);
 
   const filteredResults = useMemo(() => {
     return searchResults.filter((item) => {
@@ -187,6 +187,16 @@ export function SearchResultsSection() {
 
   const allResultsSelected =
     searchResults.length > 0 && selectedSearchPmids.length === searchResults.length;
+  const unresolvedSearchArticles = useMemo(
+    () =>
+      searchResults.filter((item) => !oaPdfByPmid[item.pmid]).map((item) => ({
+        pmid: item.pmid,
+        doi: item.doi,
+        pmcid: item.pmcid,
+        title: item.title,
+      })),
+    [oaPdfByPmid, searchResults]
+  );
   const selectedAvailableOaPmids = useMemo(
     () =>
       selectedSearchPmids.filter((pmid) => {
@@ -195,6 +205,24 @@ export function SearchResultsSection() {
       }),
     [oaPdfByPmid, selectedSearchPmids]
   );
+  const selectedBatchStats = useMemo(() => {
+    let fastPmcCount = 0;
+    let fallbackCount = 0;
+
+    for (const pmid of selectedAvailableOaPmids) {
+      const resolution = oaPdfByPmid[pmid];
+      if (resolution?.best_candidate?.source === "pmc") {
+        fastPmcCount += 1;
+      } else {
+        fallbackCount += 1;
+      }
+    }
+
+    return {
+      fastPmcCount,
+      fallbackCount,
+    };
+  }, [oaPdfByPmid, selectedAvailableOaPmids]);
 
   const handleLoadMore = async () => {
     if (searchSession.source !== "query" || !searchSession.hasMore || isLoadingMore) {
@@ -247,22 +275,10 @@ export function SearchResultsSection() {
         pmcid: item.pmcid,
         title: item.title,
       }));
-      const results: OAPdfResolution[] = [];
-
-      for (let index = 0; index < articles.length; index += OA_PDF_RESOLVE_BATCH_SIZE) {
-        const chunk = articles.slice(index, index + OA_PDF_RESOLVE_BATCH_SIZE);
-        const chunkResults = await resolveOAPdf(chunk, unpaywallEmail.trim() || undefined);
-        results.push(...chunkResults);
-        setOaPdfByPmid((current) => {
-          const next = { ...current };
-          for (const result of chunkResults) {
-            next[result.pmid] = result;
-          }
-          return next;
-        });
-        setOaPdfResolvedCount(Math.min(index + chunk.length, articles.length));
-        setOaPdfProgress((Math.min(index + chunk.length, articles.length) / articles.length) * 100);
-      }
+      const results = await resolveOAPdf(articles, unpaywallEmail.trim() || undefined);
+      setOaPdfResolutions(results);
+      setOaPdfResolvedCount(results.length);
+      setOaPdfProgress(100);
 
       const available = results.filter((item) => item.availability === "available").length;
       toast.success(`OA PDF check finished: ${available}/${results.length} available`);
@@ -277,6 +293,48 @@ export function SearchResultsSection() {
       }, 500);
     }
   };
+
+  useEffect(() => {
+    if (searchResults.length === 0 || unresolvedSearchArticles.length === 0 || autoResolveInFlight.current) {
+      return;
+    }
+
+    let cancelled = false;
+    autoResolveInFlight.current = true;
+    setIsResolvingOaPdf(true);
+    setOaPdfProgress(0);
+    setOaPdfResolvedCount(searchResults.length - unresolvedSearchArticles.length);
+
+    void (async () => {
+      try {
+        const results = await resolveOAPdf(unresolvedSearchArticles, unpaywallEmail.trim() || undefined);
+        if (cancelled) {
+          return;
+        }
+        setOaPdfResolutions(results);
+        setOaPdfResolvedCount(searchResults.length);
+        setOaPdfProgress(100);
+      } catch (error) {
+        if (!cancelled) {
+          console.error("Auto resolve OA PDF error:", error);
+          toast.error("Automatic OA PDF check failed. You can retry manually.");
+        }
+      } finally {
+        autoResolveInFlight.current = false;
+        if (!cancelled) {
+          setIsResolvingOaPdf(false);
+          window.setTimeout(() => {
+            setOaPdfProgress(null);
+            setOaPdfResolvedCount(0);
+          }, 500);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [searchResults, unresolvedSearchArticles, setOaPdfResolutions, unpaywallEmail]);
 
   const handleDownloadOaPdf = async (pmid: string) => {
     const item = searchResults.find((entry) => entry.pmid === pmid);
@@ -489,15 +547,6 @@ export function SearchResultsSection() {
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
-                <div className="min-w-[220px] flex-1">
-                  <Input
-                    type="email"
-                    value={unpaywallEmail}
-                    onChange={(event) => setUnpaywallEmail(event.target.value)}
-                    placeholder="Unpaywall email"
-                    className="h-9"
-                  />
-                </div>
                 <Button
                   variant="outline"
                   size="sm"
@@ -530,18 +579,29 @@ export function SearchResultsSection() {
                   Select All
                 </Button>
               </div>
+              <div className="text-xs text-muted-foreground">
+                {Object.keys(oaPdfByPmid).length === 0
+                  ? "OA PDF availability now starts automatically after search results appear. Batch download is fastest when PMC can serve the PDF directly."
+                  : selectedAvailableOaPmids.length === 0
+                    ? "No checked OA PDF items are currently selected."
+                    : selectedBatchStats.fallbackCount === 0
+                      ? `Selected batch uses the PMC fast path for all ${selectedBatchStats.fastPmcCount} article(s).`
+                      : `Selected batch: ${selectedBatchStats.fastPmcCount} PMC fast-path article(s), ${selectedBatchStats.fallbackCount} article(s) may fall back to slower external OA hosts.`}
+              </div>
             </CardHeader>
 
             <CardContent className="min-w-0 overflow-hidden space-y-4">
               {oaPdfProgress !== null && (
-                <div className="rounded-xl border border-sky-200/70 bg-sky-50/60 p-3">
-                  <div className="mb-2 flex items-center justify-between gap-3 text-sm">
-                    <span className="font-medium text-sky-900">Checking legal OA PDF availability</span>
-                    <span className="text-sky-700">
-                      {oaPdfResolvedCount}/{searchResults.length}
+                <div className="rounded-xl border border-amber-200/70 bg-amber-50/50 p-3">
+                  <div className="flex items-center justify-between gap-3 text-sm">
+                    <span className="font-medium text-amber-900">Checking legal OA PDF availability</span>
+                    <span className="text-amber-800">
+                      {oaPdfResolvedCount}/{searchResults.length} checked
                     </span>
                   </div>
-                  <Progress value={oaPdfProgress} className="h-2" />
+                  <div className="mt-1 text-xs text-amber-800/80">
+                    Results are shown first, then the backend fills OA PDF availability in the background for unresolved articles.
+                  </div>
                 </div>
               )}
 
@@ -583,31 +643,32 @@ export function SearchResultsSection() {
                             </div>
 
                             <div className="flex flex-wrap items-center gap-2">
-                              <span className="inline-flex max-w-full truncate rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-medium tracking-wide text-emerald-900 shadow-sm">
+                              <span className={`${PILL_BASE_CLASS} border-emerald-200 bg-emerald-50 text-emerald-900`}>
                                 {item.journal || "Unknown journal"}
                               </span>
-                              {item.articleType && (
-                                <Badge variant="outline" className="font-normal">
-                                  {item.articleType}
-                                </Badge>
-                              )}
-                              {item.language && (
-                                <Badge variant="outline" className="font-normal">
-                                  {item.language}
-                                </Badge>
-                              )}
-                              <Badge variant={item.hasFullText ? "default" : "outline"} className="font-normal">
+                              <span
+                                className={`${PILL_BASE_CLASS} ${
+                                  item.hasFullText
+                                    ? "border-cyan-200 bg-cyan-50 text-cyan-900"
+                                    : "border-slate-200 bg-slate-50 text-slate-700"
+                                }`}
+                              >
                                 {item.hasFullText ? "PMC Full Text" : "Metadata Only"}
-                              </Badge>
+                              </span>
                               {oaPdf && (
                                 <span
-                                  className={`inline-flex rounded-full border px-3 py-1 text-xs font-medium tracking-wide shadow-sm ${
+                                  className={`${PILL_BASE_CLASS} ${
                                     canDownloadOa
-                                      ? "border-sky-200 bg-sky-50 text-sky-900"
+                                      ? "border-amber-200 bg-amber-50 text-amber-900"
                                       : "border-slate-200 bg-slate-50 text-slate-700"
                                   }`}
                                 >
                                   {canDownloadOa ? "OA PDF Available" : "No OA PDF"}
+                                </span>
+                              )}
+                              {!oaPdf && (
+                                <span className={`${PILL_BASE_CLASS} border-amber-200 bg-amber-50/70 text-amber-800`}>
+                                  OA PDF Checking...
                                 </span>
                               )}
                             </div>
@@ -618,10 +679,10 @@ export function SearchResultsSection() {
                           </div>
 
                           {oaPdf && (
-                            <div className="rounded-xl border border-border/60 bg-muted/20 p-3 text-sm">
+                            <div className="rounded-xl border border-amber-200/70 bg-amber-50/45 p-3 text-sm">
                               <div className="flex flex-wrap items-center justify-between gap-3">
-                                <div className="space-y-1 text-muted-foreground">
-                                  <div className="font-medium text-foreground">Legal OA PDF</div>
+                                <div className="space-y-1 text-amber-800/85">
+                                  <div className="font-medium text-amber-950">Legal OA PDF</div>
                                   <div>{oaPdf.reason}</div>
                                   {oaPdf.best_candidate && (
                                     <div className="flex flex-wrap gap-3 text-xs">
@@ -646,6 +707,11 @@ export function SearchResultsSection() {
                                   Download OA PDF
                                 </Button>
                               </div>
+                            </div>
+                          )}
+                          {!oaPdf && (
+                            <div className="rounded-xl border border-amber-200/60 bg-amber-50/35 p-3 text-sm text-amber-800/85">
+                              Automatic OA PDF check is running for this article.
                             </div>
                           )}
 

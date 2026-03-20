@@ -331,6 +331,7 @@ def build_oa_pdf_resolver(unpaywall_email: Optional[str] = None) -> OAPdfResolve
         unpaywall_email=unpaywall_email or config.oa_pdf.unpaywall_email,
         enable_pmc=config.oa_pdf.enable_pmc,
         enable_unpaywall=config.oa_pdf.enable_unpaywall,
+        enable_europepmc=config.oa_pdf.enable_europepmc,
     )
 
 
@@ -546,36 +547,72 @@ async def download_oa_pdfs(request: OAPdfBatchDownloadRequest):
         raise HTTPException(status_code=400, detail="No articles were provided")
 
     try:
-        resolver = build_oa_pdf_resolver(request.unpaywall_email)
-        semaphore = asyncio.Semaphore(3)
+        article_payloads = [article.model_dump() for article in request.articles]
+        pmc_first_articles = [article for article in article_payloads if article.get("pmcid")]
+        fallback_only_articles = [article for article in article_payloads if not article.get("pmcid")]
+        records_by_pmid: Dict[str, Any] = {}
 
-        async def download_single(article: OAPdfArticleRequest):
-            async with semaphore:
-                return await resolver.download_best(article.model_dump())
+        if pmc_first_articles:
+            fast_resolver = OAPdfResolver(
+                timeout=config.oa_pdf.timeout,
+                max_retries=config.oa_pdf.max_retries,
+                prefer_pmc=config.oa_pdf.prefer_pmc,
+                strict_oa=config.oa_pdf.strict_oa,
+                cache_dir=config.oa_pdf.cache_dir,
+                cache_only_when_license_known=config.oa_pdf.cache_only_when_license_known,
+                unpaywall_email=None,
+                enable_pmc=config.oa_pdf.enable_pmc,
+                enable_unpaywall=False,
+                enable_europepmc=False,
+            )
+            fast_records = await fast_resolver.download_many(pmc_first_articles, concurrency=3)
+            for record in fast_records:
+                records_by_pmid[record.pmid] = record
 
-        records = [
-            record
-            for record in await asyncio.gather(*(download_single(article) for article in request.articles))
-            if record.status == "downloaded" and record.local_path
-        ]
+            retry_articles = [
+                article
+                for article in pmc_first_articles
+                if records_by_pmid.get(article.get("pmid")) is not None
+                and records_by_pmid[article.get("pmid")].status != "downloaded"
+            ]
+        else:
+            retry_articles = []
 
-        if not records:
+        retry_articles.extend(fallback_only_articles)
+
+        if retry_articles:
+            fallback_resolver = build_oa_pdf_resolver(request.unpaywall_email)
+            fallback_records = await fallback_resolver.download_many(retry_articles, concurrency=3)
+            for record in fallback_records:
+                records_by_pmid[record.pmid] = record
+
+        records = [records_by_pmid[article["pmid"]] for article in article_payloads if article.get("pmid") in records_by_pmid]
+        successful_records = [record for record in records if record.status == "downloaded" and record.local_path]
+
+        if not successful_records:
             raise HTTPException(status_code=404, detail="No OA PDFs were downloaded for the selected articles")
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp_file:
             zip_path = Path(tmp_file.name)
 
         with zipfile.ZipFile(zip_path, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
-            for record in records:
+            for record in successful_records:
                 file_path = Path(record.local_path)
                 if file_path.exists():
                     archive.write(file_path, arcname=record.filename or file_path.name)
+            archive.writestr(
+                "manifest.json",
+                json.dumps([record.model_dump() for record in records], ensure_ascii=False, indent=2),
+            )
 
         return FileResponse(
             path=zip_path,
             media_type="application/zip",
             filename=f"oa_pdfs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
-            headers={"X-OA-PDF-Count": str(len(records))},
+            headers={
+                "X-OA-PDF-Count": str(len(successful_records)),
+                "X-OA-PDF-Failed": str(len(records) - len(successful_records)),
+            },
         )
     except HTTPException:
         raise

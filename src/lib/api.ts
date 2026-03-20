@@ -37,7 +37,7 @@ export interface SearchResult {
 }
 
 export interface OAPdfCandidate {
-  source: "pmc" | "unpaywall";
+  source: "pmc" | "unpaywall" | "europepmc";
   pdf_url?: string;
   landing_page_url?: string;
   license?: string;

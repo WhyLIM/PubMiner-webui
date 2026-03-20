@@ -65,6 +65,36 @@ const statusConfig = {
   },
 };
 
+function summarizeChunkReport(
+  chunkReport?: Array<{
+    status: string;
+    pmids: string[];
+    chunk_index: number;
+  }>
+) {
+  const summary = {
+    completed: 0,
+    running: 0,
+    failed: 0,
+    pending: 0,
+    retryablePmids: [] as string[],
+  };
+
+  for (const chunk of chunkReport ?? []) {
+    if (chunk.status === "completed") summary.completed += 1;
+    else if (chunk.status === "running") summary.running += 1;
+    else if (chunk.status === "failed") {
+      summary.failed += 1;
+      summary.retryablePmids.push(...chunk.pmids);
+    } else {
+      summary.pending += 1;
+    }
+  }
+
+  summary.retryablePmids = Array.from(new Set(summary.retryablePmids));
+  return summary;
+}
+
 export function TasksSection() {
   const [selectedTab, setSelectedTab] = useState("all");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -144,29 +174,10 @@ export function TasksSection() {
 
     return summary;
   }, [activeTask?.articleReport]);
-  const chunkStatusSummary = useMemo(() => {
-    const summary = {
-      completed: 0,
-      running: 0,
-      failed: 0,
-      pending: 0,
-      retryablePmids: [] as string[],
-    };
-
-    for (const chunk of activeTask?.chunkReport ?? []) {
-      if (chunk.status === "completed") summary.completed += 1;
-      else if (chunk.status === "running") summary.running += 1;
-      else if (chunk.status === "failed") {
-        summary.failed += 1;
-        summary.retryablePmids.push(...chunk.pmids);
-      } else {
-        summary.pending += 1;
-      }
-    }
-
-    summary.retryablePmids = Array.from(new Set(summary.retryablePmids));
-    return summary;
-  }, [activeTask?.chunkReport]);
+  const chunkStatusSummary = useMemo(
+    () => summarizeChunkReport(activeTask?.chunkReport),
+    [activeTask?.chunkReport]
+  );
   const authIssueMessage = useMemo(() => {
     const candidates = [
       activeTask?.message,
@@ -364,13 +375,15 @@ export function TasksSection() {
               </Tabs>
             </CardHeader>
 
-            <CardContent className="pt-0">
-              <ScrollArea className="h-[560px] pr-3">
+            <CardContent className="space-y-4 pt-0">
+              <ScrollArea className={`${activeTask?.chunkReport?.length ? "h-[360px]" : "h-[560px]"} pr-3`}>
                 <div className="space-y-3">
                   {filteredTasks.map((task) => {
                     const config = statusConfig[task.status as keyof typeof statusConfig];
                     const StatusIcon = config.icon;
                     const isActive = activeTask?.id === task.id;
+                    const taskChunkSummary = summarizeChunkReport(task.chunkReport);
+                    const hasChunkReport = Boolean(task.chunkReport?.length);
 
                     return (
                       <button
@@ -412,6 +425,32 @@ export function TasksSection() {
                             <span>{Math.round(task.progress)}%</span>
                             <span>{task.completed}/{task.total} articles</span>
                           </div>
+                          {hasChunkReport && (
+                            <div className="rounded-lg border border-border/50 bg-muted/30 px-3 py-2">
+                              <div className="mb-2 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                                <span>Chunk Progress</span>
+                                <span>{task.chunkReport?.length} batches</span>
+                              </div>
+                              <div className="grid grid-cols-4 gap-2 text-left text-[11px]">
+                                <div>
+                                  <div className="text-muted-foreground">Done</div>
+                                  <div className="font-medium text-foreground">{taskChunkSummary.completed}</div>
+                                </div>
+                                <div>
+                                  <div className="text-muted-foreground">Run</div>
+                                  <div className="font-medium text-foreground">{taskChunkSummary.running}</div>
+                                </div>
+                                <div>
+                                  <div className="text-muted-foreground">Fail</div>
+                                  <div className="font-medium text-foreground">{taskChunkSummary.failed}</div>
+                                </div>
+                                <div>
+                                  <div className="text-muted-foreground">Wait</div>
+                                  <div className="font-medium text-foreground">{taskChunkSummary.pending}</div>
+                                </div>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </button>
                     );
@@ -423,6 +462,73 @@ export function TasksSection() {
                   )}
                 </div>
               </ScrollArea>
+
+              {activeTask?.chunkReport && activeTask.chunkReport.length > 0 && (
+                <div className="rounded-xl border border-border/50 bg-background p-4">
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="text-sm font-medium">Chunk Progress</h3>
+                      <Badge variant="outline" className="font-normal">
+                        {activeTask.chunkReport.length} batches
+                      </Badge>
+                    </div>
+                    <p className="text-xs leading-5 text-muted-foreground">
+                      Batch-level progress stays in the left task panel so you can monitor queue health without leaving the task list.
+                    </p>
+                  </div>
+
+                  <div className="mt-4 grid grid-cols-2 gap-3">
+                    <div className="rounded-lg border border-border/50 bg-muted/20 px-3 py-2">
+                      <div className="text-[11px] text-muted-foreground">Completed</div>
+                      <div className="mt-1 text-lg font-semibold">{chunkStatusSummary.completed}</div>
+                    </div>
+                    <div className="rounded-lg border border-border/50 bg-muted/20 px-3 py-2">
+                      <div className="text-[11px] text-muted-foreground">Running</div>
+                      <div className="mt-1 text-lg font-semibold">{chunkStatusSummary.running}</div>
+                    </div>
+                    <div className="rounded-lg border border-border/50 bg-muted/20 px-3 py-2">
+                      <div className="text-[11px] text-muted-foreground">Failed</div>
+                      <div className="mt-1 text-lg font-semibold">{chunkStatusSummary.failed}</div>
+                    </div>
+                    <div className="rounded-lg border border-border/50 bg-muted/20 px-3 py-2">
+                      <div className="text-[11px] text-muted-foreground">Pending</div>
+                      <div className="mt-1 text-lg font-semibold">{chunkStatusSummary.pending}</div>
+                    </div>
+                  </div>
+
+                  <ScrollArea className="mt-4 h-[220px] pr-3">
+                    <div className="space-y-3">
+                      {activeTask.chunkReport.map((chunk) => (
+                        <div
+                          key={`${activeTask.id}-queue-chunk-${chunk.chunk_index}`}
+                          className="rounded-lg border border-border/50 p-3 space-y-2"
+                        >
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge variant="outline" className="font-normal">
+                              Chunk {chunk.chunk_index}
+                            </Badge>
+                            <Badge variant="secondary" className="font-normal capitalize">
+                              {chunk.status}
+                            </Badge>
+                            <span className="text-xs text-muted-foreground">
+                              {chunk.article_count} articles
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
+                            <div>full text: {chunk.fulltext_downloaded}</div>
+                            <div>cache hits: {chunk.cached_hits}</div>
+                            <div>success: {chunk.extraction_success}</div>
+                            <div>failed: {chunk.extraction_failed}</div>
+                          </div>
+                          <div className="text-xs leading-5 text-muted-foreground">
+                            <span className="break-words whitespace-pre-wrap">{chunk.message}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -695,70 +801,6 @@ export function TasksSection() {
                     </div>
                   )}
 
-                  {activeTask.chunkReport && activeTask.chunkReport.length > 0 && (
-                    <div className="space-y-4">
-                      <div>
-                        <h3 className="text-sm font-medium">Chunk Progress</h3>
-                        <p className="text-sm text-muted-foreground">
-                          Batch-level progress for large runs, including cache reuse and extraction outcomes.
-                        </p>
-                      </div>
-
-                      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                        <div className="rounded-xl border border-border/50 bg-background px-4 py-3">
-                          <div className="text-xs text-muted-foreground">Completed</div>
-                          <div className="mt-2 text-xl font-semibold">{chunkStatusSummary.completed}</div>
-                        </div>
-                        <div className="rounded-xl border border-border/50 bg-background px-4 py-3">
-                          <div className="text-xs text-muted-foreground">Running</div>
-                          <div className="mt-2 text-xl font-semibold">{chunkStatusSummary.running}</div>
-                        </div>
-                        <div className="rounded-xl border border-border/50 bg-background px-4 py-3">
-                          <div className="text-xs text-muted-foreground">Failed</div>
-                          <div className="mt-2 text-xl font-semibold">{chunkStatusSummary.failed}</div>
-                        </div>
-                        <div className="rounded-xl border border-border/50 bg-background px-4 py-3">
-                          <div className="text-xs text-muted-foreground">Pending</div>
-                          <div className="mt-2 text-xl font-semibold">{chunkStatusSummary.pending}</div>
-                        </div>
-                      </div>
-
-                      <div className="rounded-xl border border-border/50 bg-background p-4 min-w-0">
-                        <ScrollArea className="max-h-[280px] pr-3">
-                          <div className="space-y-3">
-                            {activeTask.chunkReport.map((chunk) => (
-                              <div
-                                key={`${activeTask.id}-chunk-${chunk.chunk_index}`}
-                                className="min-w-0 rounded-lg border border-border/50 p-4 space-y-3"
-                              >
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <Badge variant="outline" className="font-normal">
-                                    Chunk {chunk.chunk_index}
-                                  </Badge>
-                                  <Badge variant="secondary" className="font-normal capitalize">
-                                    {chunk.status}
-                                  </Badge>
-                                  <span className="text-sm text-muted-foreground">
-                                    {chunk.article_count} articles
-                                  </span>
-                                </div>
-                                <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2 xl:grid-cols-4">
-                                  <div>full text: {chunk.fulltext_downloaded}</div>
-                                  <div>cache hits: {chunk.cached_hits}</div>
-                                  <div>success: {chunk.extraction_success}</div>
-                                  <div>failed: {chunk.extraction_failed}</div>
-                                </div>
-                                <div className="text-sm text-muted-foreground">
-                                  <span className="break-words whitespace-pre-wrap">{chunk.message}</span>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </ScrollArea>
-                      </div>
-                    </div>
-                  )}
-
                   {activeTask.citationReport && (
                     <div className="space-y-4">
                       <div>
@@ -862,22 +904,22 @@ export function TasksSection() {
                       )}
 
                       {activeTask.fullTextReport.failed_items.length > 0 && (
-                        <div className="rounded-xl border border-border/50 bg-background p-4 space-y-4">
+                        <div className="min-w-0 overflow-hidden rounded-xl border border-border/50 bg-background p-4 space-y-4">
                           <div className="text-sm font-medium">Failed PMC Articles</div>
-                          <ScrollArea className="max-h-[210px] pr-3">
+                          <ScrollArea className="h-[240px] w-full pr-3">
                             <div className="space-y-4">
                               {activeTask.fullTextReport.failed_items.map((item) => (
-                                <div key={item.pmcid} className="rounded-lg border border-border/50 p-4 space-y-2">
+                                <div key={item.pmcid} className="min-w-0 rounded-lg border border-border/50 p-4 space-y-2">
                                   <div className="flex flex-wrap items-center gap-2">
                                     <span className="font-medium">{item.pmcid}</span>
                                     <Badge variant="outline" className="font-normal">
                                       {activeTask.fullTextReport?.failure_labels[item.reason] || item.reason}
                                     </Badge>
                                   </div>
-                                  <div className="text-sm text-muted-foreground">
+                                  <div className="break-words whitespace-pre-wrap text-sm text-muted-foreground">
                                     {item.message || "No detailed backend message available."}
                                   </div>
-                                  <div className="text-sm text-muted-foreground">
+                                  <div className="break-words whitespace-pre-wrap text-sm text-muted-foreground">
                                     Suggested action: {getFailureAction(item.reason)}
                                   </div>
                                 </div>

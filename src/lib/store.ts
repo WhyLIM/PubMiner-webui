@@ -105,6 +105,30 @@ export interface SearchSession {
   hasMore: boolean;
 }
 
+export interface OAPdfCandidateState {
+  source: "pmc" | "unpaywall" | "europepmc";
+  pdf_url?: string;
+  landing_page_url?: string;
+  license?: string;
+  host_type?: "publisher" | "repository";
+  version?: string;
+  evidence: string;
+  can_download: boolean;
+  can_cache: boolean;
+  score: number;
+}
+
+export interface OAPdfResolutionState {
+  pmid: string;
+  doi?: string | null;
+  pmcid?: string | null;
+  availability: "available" | "unavailable" | "ambiguous";
+  best_candidate?: OAPdfCandidateState | null;
+  candidates: OAPdfCandidateState[];
+  reason: string;
+  resolved_at: string;
+}
+
 interface AppState {
   // Tasks
   tasks: Task[];
@@ -124,6 +148,11 @@ interface AppState {
   searchSession: SearchSession;
   setSearchSession: (session: SearchSession) => void;
   clearSearchResults: () => void;
+  unpaywallEmail: string;
+  setUnpaywallEmail: (email: string) => void;
+  oaPdfByPmid: Record<string, OAPdfResolutionState>;
+  setOaPdfResolutions: (resolutions: OAPdfResolutionState[]) => void;
+  clearOaPdfResolutions: () => void;
 
   // Extraction results
   extractionResults: ExtractionResult[];
@@ -179,6 +208,7 @@ export const useAppStore = create<AppState>((set) => ({
     set({
       searchResults: [],
       selectedSearchPmids: [],
+      oaPdfByPmid: {},
       searchSession: {
         source: null,
         query: "",
@@ -188,6 +218,18 @@ export const useAppStore = create<AppState>((set) => ({
         hasMore: false,
       },
     }),
+  unpaywallEmail: "1632787660@qq.com",
+  setUnpaywallEmail: (email) => set({ unpaywallEmail: email }),
+  oaPdfByPmid: {},
+  setOaPdfResolutions: (resolutions) =>
+    set((state) => {
+      const next = { ...state.oaPdfByPmid };
+      for (const resolution of resolutions) {
+        next[resolution.pmid] = resolution;
+      }
+      return { oaPdfByPmid: next };
+    }),
+  clearOaPdfResolutions: () => set({ oaPdfByPmid: {} }),
 
   // Extraction results
   extractionResults: [],

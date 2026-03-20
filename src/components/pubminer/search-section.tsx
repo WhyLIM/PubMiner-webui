@@ -11,7 +11,10 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -27,50 +30,8 @@ import {
 } from "lucide-react";
 import { useAppStore } from "@/lib/store";
 import { fetchMetadata, searchPubMed } from "@/lib/api";
+import { formatPubMedSearchTerm, PUBMED_FIELD_GROUPS, PUBMED_FIELD_MAP } from "@/lib/pubmed-fields";
 import { toast } from "sonner";
-
-const PUBMED_FIELDS: Record<string, { name: string; description: string; example: string }> = {
-  "All Fields": {
-    name: "全部字段",
-    description: "Search all available fields",
-    example: "cancer therapy",
-  },
-  "Title": {
-    name: "标题",
-    description: "Search article titles only",
-    example: "biomarkers[Title]",
-  },
-  "Title/Abstract": {
-    name: "标题/摘要",
-    description: "Search titles and abstracts",
-    example: "aging[Title/Abstract]",
-  },
-  "Abstract": {
-    name: "摘要",
-    description: "Search abstract content only",
-    example: "efficacy[Abstract]",
-  },
-  "MeSH Terms": {
-    name: "MeSH 主题词",
-    description: "Medical Subject Headings",
-    example: "neoplasms[MeSH]",
-  },
-  "Author": {
-    name: "作者",
-    description: "Search author names",
-    example: "Smith J[Author]",
-  },
-  "Journal": {
-    name: "期刊",
-    description: "Search journal names",
-    example: "Nature[Journal]",
-  },
-  "Date - Publication": {
-    name: "发表日期",
-    description: "Search publication dates",
-    example: "2020:2024[pdat]",
-  },
-};
 
 const BOOLEAN_OPERATORS = ["AND", "OR", "NOT"];
 
@@ -82,14 +43,23 @@ interface SearchTerm {
 }
 
 const exampleQueries = [
-  { label: "Aging Biomarkers", query: "aging biomarkers[Title/Abstract] AND humans[Filter]" },
-  { label: "COVID-19 Vaccine", query: "COVID-19 vaccine[Title] AND efficacy[Title/Abstract]" },
-  { label: "Cancer Immunotherapy", query: "cancer immunotherapy[MeSH] AND clinical trial[ptyp]" },
+  {
+    label: "Aging Biomarkers",
+    query: "(aging[tiab] OR longevity[tiab]) AND (biomarker*[tiab] OR \"biological age\"[tiab]) AND humans[filter] AND english[la] AND 2020:2026[dp]",
+  },
+  {
+    label: "COVID-19 Vaccine",
+    query: "(\"COVID-19 Vaccines\"[mh] OR \"covid-19 vaccine\"[tiab]) AND (effectiveness[tiab] OR efficacy[tiab]) AND (cohort[tiab] OR \"clinical trial\"[pt]) AND 2021:2026[dp]",
+  },
+  {
+    label: "Cancer Immunotherapy",
+    query: "((\"Neoplasms\"[mh] AND immunotherapy[tiab]) OR \"immune checkpoint inhibitors\"[tiab]) AND (survival[tiab] OR response[tiab]) AND (trial[tiab] OR \"clinical trial\"[pt]) NOT review[pt]",
+  },
 ];
 
 export function SearchSection() {
   const [searchTerms, setSearchTerms] = useState<SearchTerm[]>([
-    { id: "1", term: "", field: "All Fields", operator: "" },
+    { id: "1", term: "", field: "all", operator: "" },
   ]);
   const [pmidList, setPmidList] = useState("");
   const [maxResults, setMaxResults] = useState("10");
@@ -101,14 +71,16 @@ export function SearchSection() {
     setSelectedSearchPmids,
     setSearchSession,
     clearSearchResults,
+    unpaywallEmail,
+    setUnpaywallEmail,
+    clearOaPdfResolutions,
   } = useAppStore();
 
   const generatedQuery = searchTerms
     .map((st, index) => {
       if (!st.term.trim()) return "";
-      const fieldSuffix = st.field === "All Fields" ? "" : `[${st.field}]`;
       const prefix = index > 0 && st.operator ? `${st.operator} ` : "";
-      return `${prefix}${st.term}${fieldSuffix}`;
+      return `${prefix}${formatPubMedSearchTerm(st.term, st.field)}`;
     })
     .filter(Boolean)
     .join(" ");
@@ -116,7 +88,7 @@ export function SearchSection() {
   const addSearchTerm = () => {
     setSearchTerms((current) => [
       ...current,
-      { id: Date.now().toString(), term: "", field: "All Fields", operator: "AND" },
+      { id: Date.now().toString(), term: "", field: "all", operator: "AND" },
     ]);
   };
 
@@ -143,6 +115,7 @@ export function SearchSection() {
         }
 
         const metadataResults = await fetchMetadata(pmids);
+        clearOaPdfResolutions();
         setSearchResults(metadataResults);
         setSelectedSearchPmids(metadataResults.map((item) => item.pmid));
         setSearchSession({
@@ -162,6 +135,7 @@ export function SearchSection() {
           offset: 0,
         });
 
+        clearOaPdfResolutions();
         setSearchResults(searchResponse.results);
         setSelectedSearchPmids(searchResponse.results.map((item) => item.pmid));
         setSearchSession({
@@ -190,13 +164,13 @@ export function SearchSection() {
   };
 
   return (
-    <section id="search" className="py-20 bg-muted/20">
+    <section id="search" className="bg-muted/20 py-20">
       <div className="container mx-auto max-w-5xl px-4">
-        <div className="text-center mb-12">
-          <h2 className="font-serif text-3xl md:text-4xl font-normal mb-4">
+        <div className="mb-12 text-center">
+          <h2 className="mb-4 font-serif text-3xl font-normal md:text-4xl">
             Search Literature
           </h2>
-          <p className="text-muted-foreground max-w-2xl mx-auto">
+          <p className="mx-auto max-w-2xl text-muted-foreground">
             Find the articles first. After you review the list below, configure LLM extraction separately.
           </p>
         </div>
@@ -204,13 +178,13 @@ export function SearchSection() {
         <Card className="border-border/50 shadow-sm">
           <CardHeader className="pb-4">
             <Tabs defaultValue="query" className="w-full">
-              <TabsList className="grid w-full grid-cols-2 h-11">
+              <TabsList className="grid h-11 w-full grid-cols-2">
                 <TabsTrigger value="query" className="gap-2">
-                  <Search className="w-4 h-4" />
+                  <Search className="h-4 w-4" />
                   Query Builder
                 </TabsTrigger>
                 <TabsTrigger value="pmid" className="gap-2">
-                  <FileText className="w-4 h-4" />
+                  <FileText className="h-4 w-4" />
                   PMID List
                 </TabsTrigger>
               </TabsList>
@@ -220,76 +194,91 @@ export function SearchSection() {
                   <div className="flex items-center justify-between">
                     <Label className="text-sm font-medium">Search Term Builder</Label>
                     <Button variant="outline" size="sm" onClick={addSearchTerm} className="gap-1">
-                      <Plus className="w-3 h-3" />
+                      <Plus className="h-3 w-3" />
                       Add Condition
                     </Button>
                   </div>
 
-                  {searchTerms.map((st, index) => (
-                    <div key={st.id} className="flex flex-wrap items-center gap-2">
-                      {index > 0 && (
-                        <Select
-                          value={st.operator}
-                          onValueChange={(value) => updateSearchTerm(st.id, { operator: value })}
-                        >
-                          <SelectTrigger className="w-20 h-10">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent className="bg-popover">
-                            {BOOLEAN_OPERATORS.map((op) => (
-                              <SelectItem key={op} value={op}>
-                                {op}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      )}
+                  {searchTerms.map((st, index) => {
+                    const selectedField = PUBMED_FIELD_MAP[st.field] ?? PUBMED_FIELD_MAP.all;
 
-                      <Input
-                        placeholder="Enter search term..."
-                        className="flex-1 min-w-48 h-10"
-                        value={st.term}
-                        onChange={(e) => updateSearchTerm(st.id, { term: e.target.value })}
-                      />
+                    return (
+                      <div key={st.id} className="space-y-2 rounded-xl border border-border/50 bg-background/70 p-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          {index > 0 && (
+                            <Select
+                              value={st.operator}
+                              onValueChange={(value) => updateSearchTerm(st.id, { operator: value })}
+                            >
+                              <SelectTrigger className="h-10 w-20">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent className="bg-popover">
+                                {BOOLEAN_OPERATORS.map((op) => (
+                                  <SelectItem key={op} value={op}>
+                                    {op}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          )}
 
-                      <Select
-                        value={st.field}
-                        onValueChange={(value) => updateSearchTerm(st.id, { field: value })}
-                      >
-                        <SelectTrigger className="w-44 h-10">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent className="bg-popover max-h-64">
-                          {Object.entries(PUBMED_FIELDS).map(([key, value]) => (
-                            <SelectItem key={key} value={key}>
-                              <span>{key}</span>
-                              <span className="text-xs text-muted-foreground ml-2">({value.name})</span>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                          <Input
+                            placeholder={`Enter search term, e.g. ${selectedField.example}`}
+                            className="h-10 min-w-48 flex-1"
+                            value={st.term}
+                            onChange={(event) => updateSearchTerm(st.id, { term: event.target.value })}
+                          />
 
-                      {searchTerms.length > 1 && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-10 w-10"
-                          onClick={() => removeSearchTerm(st.id)}
-                        >
-                          <X className="w-4 h-4" />
-                        </Button>
-                      )}
-                    </div>
-                  ))}
+                          <Select
+                            value={st.field}
+                            onValueChange={(value) => updateSearchTerm(st.id, { field: value })}
+                          >
+                            <SelectTrigger className="h-10 w-full min-w-[260px] max-w-[360px]">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent className="max-h-72 bg-popover">
+                              {PUBMED_FIELD_GROUPS.map((group, groupIndex) => (
+                                <SelectGroup key={group.label}>
+                                  {groupIndex > 0 && <SelectSeparator />}
+                                  <SelectLabel>{group.label}</SelectLabel>
+                                  {group.fields.map((field) => (
+                                    <SelectItem key={field.id} value={field.id}>
+                                      {field.label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectGroup>
+                              ))}
+                            </SelectContent>
+                          </Select>
+
+                          {searchTerms.length > 1 && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-10 w-10"
+                              onClick={() => removeSearchTerm(st.id)}
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </div>
+
+                        <div className="text-xs leading-5 text-muted-foreground">
+                          {selectedField.description}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
 
                 {generatedQuery && (
-                  <div className="p-4 rounded-lg bg-muted/50 border border-border/50">
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
-                      <Wand2 className="w-4 h-4" />
+                  <div className="space-y-3 rounded-lg border border-border/50 bg-muted/50 p-4">
+                    <div className="mb-2 flex items-center gap-2 text-sm text-muted-foreground">
+                      <Wand2 className="h-4 w-4" />
                       Generated Query
                     </div>
-                    <code className="text-sm font-mono text-foreground break-all">{generatedQuery}</code>
+                    <code className="break-all text-sm font-mono text-foreground">{generatedQuery}</code>
                   </div>
                 )}
 
@@ -302,7 +291,7 @@ export function SearchSection() {
                         variant="secondary"
                         className="cursor-pointer font-normal"
                         onClick={() =>
-                          setSearchTerms([{ id: "1", term: item.query, field: "All Fields", operator: "" }])
+                          setSearchTerms([{ id: "1", term: item.query, field: "all", operator: "" }])
                         }
                       >
                         {item.label}
@@ -320,15 +309,15 @@ export function SearchSection() {
                     </Label>
                     <Textarea
                       id="pmids"
-                      placeholder="Enter one PMID per line:&#10;38723456&#10;38695432&#10;38654321"
-                      className="mt-2 min-h-32 font-mono text-sm bg-background"
+                      placeholder={"Enter one PMID per line:\n38723456\n38695432\n38654321"}
+                      className="mt-2 min-h-32 bg-background font-mono text-sm"
                       value={pmidList}
-                      onChange={(e) => setPmidList(e.target.value)}
+                      onChange={(event) => setPmidList(event.target.value)}
                     />
                   </div>
                   <div className="flex items-center gap-4">
                     <Button variant="outline" size="sm" className="gap-2">
-                      <Upload className="w-4 h-4" />
+                      <Upload className="h-4 w-4" />
                       Upload File
                     </Button>
                     <span className="text-sm text-muted-foreground">
@@ -343,32 +332,48 @@ export function SearchSection() {
           <Separator />
 
           <CardContent className="pt-6">
-            <div className="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
-              <div className="space-y-2">
-                <div className="text-sm font-medium">Search Scope</div>
-                <div className="max-w-xs">
-                  <Select value={maxResults} onValueChange={setMaxResults}>
-                    <SelectTrigger className="bg-background">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent className="bg-popover">
-                      <SelectItem value="10">10 articles</SelectItem>
-                      <SelectItem value="50">50 articles</SelectItem>
-                      <SelectItem value="100">100 articles</SelectItem>
-                      <SelectItem value="200">200 articles</SelectItem>
-                      <SelectItem value="500">500 articles</SelectItem>
-                      <SelectItem value="all">All Results</SelectItem>
-                    </SelectContent>
-                  </Select>
+            <div className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2 md:items-start">
+                <div className="space-y-2">
+                  <div className="text-sm font-medium">Search Scope</div>
+                  <div className="max-w-xs">
+                    <Select value={maxResults} onValueChange={setMaxResults}>
+                      <SelectTrigger className="bg-background">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="bg-popover">
+                        <SelectItem value="10">10 articles</SelectItem>
+                        <SelectItem value="50">50 articles</SelectItem>
+                        <SelectItem value="100">100 articles</SelectItem>
+                        <SelectItem value="200">200 articles</SelectItem>
+                        <SelectItem value="500">500 articles</SelectItem>
+                        <SelectItem value="all">All Results</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="text-sm text-muted-foreground">
+                    {searchResults.length > 0
+                      ? `Loaded ${searchResults.length} articles. Review them below before configuring extraction.`
+                      : "Run a search to build the article list first."}
+                  </div>
                 </div>
-                <div className="text-sm text-muted-foreground">
-                  {searchResults.length > 0
-                    ? `Loaded ${searchResults.length} articles. Review them below before configuring extraction.`
-                    : "Run a search to build the article list first."}
+
+                <div className="space-y-2">
+                  <div className="text-sm font-medium">OA PDF Settings</div>
+                  <Input
+                    type="email"
+                    value={unpaywallEmail}
+                    onChange={(event) => setUnpaywallEmail(event.target.value)}
+                    placeholder="Unpaywall email (optional but recommended)"
+                    className="max-w-sm bg-background"
+                  />
+                  <div className="text-sm text-muted-foreground">
+                    Used when OA PDF detection needs DOI-based Unpaywall fallback. PMC-first checks still work without it.
+                  </div>
                 </div>
               </div>
 
-              <div className="flex flex-wrap items-center gap-3">
+              <div className="flex flex-wrap items-center justify-center gap-3 pt-3 md:pt-4">
                 <Button
                   size="lg"
                   className="gap-2 px-6"
@@ -377,12 +382,12 @@ export function SearchSection() {
                 >
                   {isLoading ? (
                     <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <Loader2 className="h-4 w-4 animate-spin" />
                       Loading...
                     </>
                   ) : (
                     <>
-                      <Search className="w-4 h-4" />
+                      <Search className="h-4 w-4" />
                       {searchResults.length > 0 ? "Refresh Results" : "Search & Preview"}
                     </>
                   )}

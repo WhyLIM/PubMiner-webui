@@ -75,4 +75,5 @@ oa_pdf:
   cache_only_when_license_known: true
   enable_pmc: true
   enable_unpaywall: true
+  enable_europepmc: true
   unpaywall_email: "${UNPAYWALL_EMAIL}"

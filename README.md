@@ -250,6 +250,21 @@ Example PMIDs for quick manual testing live in:
 
 - `docs/examples/test_pmids.txt`
 
+OA PDF benchmark for the fixed 10-article sample:
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\benchmark_oa_pdf.py
+```
+
+Optional variants:
+
+```powershell
+.\.venv\Scripts\python.exe .\scripts\benchmark_oa_pdf.py --method pmc
+.\.venv\Scripts\python.exe .\scripts\benchmark_oa_pdf.py --method europepmc-ptpmcrender
+.\.venv\Scripts\python.exe .\scripts\benchmark_oa_pdf.py --method europepmc-pdf-render
+.\.venv\Scripts\python.exe .\scripts\benchmark_oa_pdf.py --concurrency 5 --timeout 60
+```
+
 ## Security Note
 
 The current `PubMiner/config/default.yaml` still contains plain-text API keys.

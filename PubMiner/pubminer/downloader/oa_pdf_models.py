@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 class OAPdfCandidate(BaseModel):
     """A single OA PDF candidate from a provider."""
 
-    source: Literal["pmc", "unpaywall"]
+    source: Literal["pmc", "unpaywall", "europepmc"]
     pdf_url: Optional[str] = Field(None, description="Direct PDF URL when known")
     landing_page_url: Optional[str] = Field(None, description="Publisher or repository landing page")
     license: Optional[str] = Field(None, description="Normalized license string if available")

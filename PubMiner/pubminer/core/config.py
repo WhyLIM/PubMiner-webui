@@ -104,6 +104,7 @@ class OAPdfConfig(BaseSettings):
     )
     enable_pmc: bool = Field(True, description="Use PMCID-derived PMC PDF candidates")
     enable_unpaywall: bool = Field(True, description="Use Unpaywall DOI lookups")
+    enable_europepmc: bool = Field(True, description="Use Europe PMC metadata as a supplemental resolver")
     unpaywall_email: Optional[str] = Field(None, description="Email required for Unpaywall API usage")
 
 
