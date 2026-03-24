@@ -97,11 +97,13 @@ export interface ExtractionResult {
 }
 
 export interface SearchSession {
+  searchSessionId: string | null;
   source: 'query' | 'pmid' | null;
   query: string;
   totalAvailable: number;
+  sessionTotal: number;
   loadedCount: number;
-  pageSize: number;
+  loadSize: number;
   hasMore: boolean;
 }
 
@@ -196,11 +198,13 @@ export const useAppStore = create<AppState>((set) => ({
         : [...state.selectedSearchPmids, pmid],
     })),
   searchSession: {
+    searchSessionId: null,
     source: null,
     query: "",
     totalAvailable: 0,
+    sessionTotal: 0,
     loadedCount: 0,
-    pageSize: 0,
+    loadSize: 0,
     hasMore: false,
   },
   setSearchSession: (session) => set({ searchSession: session }),
@@ -210,11 +214,13 @@ export const useAppStore = create<AppState>((set) => ({
       selectedSearchPmids: [],
       oaPdfByPmid: {},
       searchSession: {
+        searchSessionId: null,
         source: null,
         query: "",
         totalAvailable: 0,
+        sessionTotal: 0,
         loadedCount: 0,
-        pageSize: 0,
+        loadSize: 0,
         hasMore: false,
       },
     }),

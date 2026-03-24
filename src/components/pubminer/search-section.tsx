@@ -57,6 +57,8 @@ const exampleQueries = [
   },
 ];
 
+const INITIAL_QUERY_LOAD_SIZE = 50;
+
 export function SearchSection() {
   const [searchTerms, setSearchTerms] = useState<SearchTerm[]>([
     { id: "1", term: "", field: "all", operator: "" },
@@ -69,6 +71,7 @@ export function SearchSection() {
     searchResults,
     setSearchResults,
     setSelectedSearchPmids,
+    searchSession,
     setSearchSession,
     clearSearchResults,
     unpaywallEmail,
@@ -119,34 +122,42 @@ export function SearchSection() {
         setSearchResults(metadataResults);
         setSelectedSearchPmids(metadataResults.map((item) => item.pmid));
         setSearchSession({
+          searchSessionId: null,
           source: "pmid",
           query: "",
           totalAvailable: metadataResults.length,
+          sessionTotal: metadataResults.length,
           loadedCount: metadataResults.length,
-          pageSize: metadataResults.length,
+          loadSize: metadataResults.length,
           hasMore: false,
         });
         toast.success(`Loaded ${metadataResults.length} articles`);
       } else if (generatedQuery) {
-        const pageSize = maxResults === "all" ? 10000 : parseInt(maxResults, 10);
+        const scopeLimit = maxResults === "all" ? 10000 : parseInt(maxResults, 10);
+        const initialLoadSize = Math.min(scopeLimit, INITIAL_QUERY_LOAD_SIZE);
         const searchResponse = await searchPubMed({
           query: generatedQuery,
-          max_results: pageSize,
+          max_results: scopeLimit,
           offset: 0,
+          load_size: initialLoadSize,
         });
 
         clearOaPdfResolutions();
         setSearchResults(searchResponse.results);
         setSelectedSearchPmids(searchResponse.results.map((item) => item.pmid));
         setSearchSession({
+          searchSessionId: searchResponse.search_session_id,
           source: "query",
           query: generatedQuery,
           totalAvailable: searchResponse.total_available,
+          sessionTotal: searchResponse.session_total,
           loadedCount: searchResponse.results.length,
-          pageSize,
+          loadSize: searchResponse.load_size,
           hasMore: searchResponse.has_more,
         });
-        toast.success(`Found ${searchResponse.results.length} articles`);
+        toast.success(
+          `Loaded ${searchResponse.results.length} of ${searchResponse.session_total} articles in this search set`
+        );
       } else {
         toast.error("Please enter a search query or PMID list");
         return;
@@ -353,7 +364,9 @@ export function SearchSection() {
                   </div>
                   <div className="text-sm text-muted-foreground">
                     {searchResults.length > 0
-                      ? `Loaded ${searchResults.length} articles. Review them below before configuring extraction.`
+                      ? searchSession.source === "query"
+                        ? `Loaded ${searchSession.loadedCount} of ${searchSession.sessionTotal} articles in this search set (${searchSession.totalAvailable} matched in PubMed).`
+                        : `Loaded ${searchResults.length} articles. Review them below before configuring extraction.`
                       : "Run a search to build the article list first."}
                   </div>
                 </div>

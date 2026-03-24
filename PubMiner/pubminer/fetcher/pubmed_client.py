@@ -186,19 +186,7 @@ class AsyncPubMedClient:
             logger.debug(f"Processing batch {batch_num}/{total_batches}")
 
             try:
-                handle = await self._rate_limited_call(
-                    Entrez.efetch,
-                    db="pubmed",
-                    id=",".join(batch),
-                    rettype="xml",
-                    retmode="xml",
-                )
-
-                data = Entrez.read(handle)
-                handle.close()
-
-                # Entrez.read() returns a dict with 'PubmedArticle' and 'PubmedBookArticle' keys
-                records = data.get("PubmedArticle", [])
+                records = await self._fetch_metadata_batch(batch, batch_num=batch_num)
 
                 for record in records:
                     try:
@@ -240,6 +228,57 @@ class AsyncPubMedClient:
             }
 
         return results
+
+    async def _fetch_metadata_batch(
+        self,
+        batch: List[str],
+        *,
+        batch_num: str | int,
+        retries_remaining: int = 2,
+    ) -> List[Dict[str, Any]]:
+        """Fetch one PubMed batch with lightweight retry and split fallback."""
+        try:
+            handle = await self._rate_limited_call(
+                Entrez.efetch,
+                db="pubmed",
+                id=",".join(batch),
+                rettype="xml",
+                retmode="xml",
+            )
+
+            data = Entrez.read(handle)
+            handle.close()
+            return data.get("PubmedArticle", [])
+        except Exception as e:
+            if retries_remaining > 0:
+                logger.warning(
+                    f"Retrying metadata batch {batch_num} ({len(batch)} PMIDs) after error: {e}"
+                )
+                await asyncio.sleep(min(1.5, 0.3 * (3 - retries_remaining)))
+                return await self._fetch_metadata_batch(
+                    batch,
+                    batch_num=batch_num,
+                    retries_remaining=retries_remaining - 1,
+                )
+
+            if len(batch) > 50:
+                logger.warning(
+                    f"Splitting metadata batch {batch_num} into smaller chunks after repeated failure"
+                )
+                records: List[Dict[str, Any]] = []
+                for split_index in range(0, len(batch), 50):
+                    sub_batch = batch[split_index:split_index + 50]
+                    sub_batch_label = f"{batch_num}.{(split_index // 50) + 1}"
+                    records.extend(
+                        await self._fetch_metadata_batch(
+                            sub_batch,
+                            batch_num=sub_batch_label,
+                            retries_remaining=1,
+                        )
+                    )
+                return records
+
+            raise
 
     def _parse_pubmed_record(self, record: Dict) -> LiteratureMetadata:
         """Parse a single PubMed XML record into LiteratureMetadata."""

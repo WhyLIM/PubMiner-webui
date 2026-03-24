@@ -17,6 +17,8 @@ export interface SearchRequest {
   query: string;
   max_results?: number;
   offset?: number;
+  load_size?: number;
+  search_session_id?: string;
 }
 
 export interface SearchResult {
@@ -65,7 +67,10 @@ export interface SearchResponse {
   query: string;
   total: number;
   total_available: number;
+  session_total: number;
+  search_session_id: string;
   offset: number;
+  load_size: number;
   returned_count: number;
   has_more: boolean;
   results: SearchResult[];
@@ -94,7 +99,7 @@ export interface MetadataResponse {
 }
 
 export interface ExtractionRequest {
-  pmids: string[];
+  pmids?: string[];
   custom_fields?: Array<{
     name: string;
     description: string;
@@ -102,6 +107,8 @@ export interface ExtractionRequest {
     enumValues?: string[];
   }> | null;
   fetch_citations?: boolean;
+  search_session_id?: string;
+  scope?: "selected" | "all_matched";
 }
 
 export interface ExtractionResponse {
@@ -109,6 +116,7 @@ export interface ExtractionResponse {
   task_id: string;
   message: string;
   article_count?: number;
+  query?: string;
 }
 
 export interface TaskStatus {

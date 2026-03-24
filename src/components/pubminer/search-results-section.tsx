@@ -73,6 +73,16 @@ export function SearchResultsSection() {
     () => filteredResults.slice((visiblePage - 1) * PAGE_SIZE, visiblePage * PAGE_SIZE),
     [filteredResults, visiblePage]
   );
+  const visiblePageArticles = useMemo(
+    () =>
+      paginatedResults.map((item) => ({
+        pmid: item.pmid,
+        doi: item.doi,
+        pmcid: item.pmcid,
+        title: item.title,
+      })),
+    [paginatedResults]
+  );
 
   const yearBuckets = useMemo(() => {
     const counts = new Map<string, number>();
@@ -187,15 +197,9 @@ export function SearchResultsSection() {
 
   const allResultsSelected =
     searchResults.length > 0 && selectedSearchPmids.length === searchResults.length;
-  const unresolvedSearchArticles = useMemo(
-    () =>
-      searchResults.filter((item) => !oaPdfByPmid[item.pmid]).map((item) => ({
-        pmid: item.pmid,
-        doi: item.doi,
-        pmcid: item.pmcid,
-        title: item.title,
-      })),
-    [oaPdfByPmid, searchResults]
+  const unresolvedVisibleArticles = useMemo(
+    () => visiblePageArticles.filter((item) => !oaPdfByPmid[item.pmid]),
+    [oaPdfByPmid, visiblePageArticles]
   );
   const selectedAvailableOaPmids = useMemo(
     () =>
@@ -225,7 +229,12 @@ export function SearchResultsSection() {
   }, [oaPdfByPmid, selectedAvailableOaPmids]);
 
   const handleLoadMore = async () => {
-    if (searchSession.source !== "query" || !searchSession.hasMore || isLoadingMore) {
+    if (
+      searchSession.source !== "query" ||
+      !searchSession.hasMore ||
+      isLoadingMore ||
+      !searchSession.searchSessionId
+    ) {
       return;
     }
 
@@ -236,15 +245,18 @@ export function SearchResultsSection() {
 
       const response = await searchPubMed({
         query: searchSession.query,
-        max_results: searchSession.pageSize,
         offset: searchSession.loadedCount,
+        load_size: searchSession.loadSize,
+        search_session_id: searchSession.searchSessionId,
       });
 
       appendSearchResults(response.results);
       setSearchSession({
         ...searchSession,
         totalAvailable: response.total_available,
+        sessionTotal: response.session_total,
         loadedCount: searchSession.loadedCount + response.results.length,
+        loadSize: response.load_size,
         hasMore: response.has_more,
       });
 
@@ -255,7 +267,9 @@ export function SearchResultsSection() {
         ]);
       }
 
-      toast.success(`Loaded ${response.results.length} more articles`);
+      toast.success(
+        `Loaded ${response.results.length} more articles (${searchSession.loadedCount + response.results.length}/${response.session_total})`
+      );
     } catch (error) {
       console.error("Load more error:", error);
       toast.error("Failed to load more results");
@@ -269,19 +283,13 @@ export function SearchResultsSection() {
       setIsResolvingOaPdf(true);
       setOaPdfProgress(0);
       setOaPdfResolvedCount(0);
-      const articles = searchResults.map((item) => ({
-        pmid: item.pmid,
-        doi: item.doi,
-        pmcid: item.pmcid,
-        title: item.title,
-      }));
-      const results = await resolveOAPdf(articles, unpaywallEmail.trim() || undefined);
+      const results = await resolveOAPdf(visiblePageArticles, unpaywallEmail.trim() || undefined);
       setOaPdfResolutions(results);
       setOaPdfResolvedCount(results.length);
       setOaPdfProgress(100);
 
       const available = results.filter((item) => item.availability === "available").length;
-      toast.success(`OA PDF check finished: ${available}/${results.length} available`);
+      toast.success(`OA PDF check finished for this page: ${available}/${results.length} available`);
     } catch (error) {
       console.error("Resolve OA PDF error:", error);
       toast.error("Failed to check OA PDF availability");
@@ -295,7 +303,7 @@ export function SearchResultsSection() {
   };
 
   useEffect(() => {
-    if (searchResults.length === 0 || unresolvedSearchArticles.length === 0 || autoResolveInFlight.current) {
+    if (paginatedResults.length === 0 || unresolvedVisibleArticles.length === 0 || autoResolveInFlight.current) {
       return;
     }
 
@@ -303,21 +311,21 @@ export function SearchResultsSection() {
     autoResolveInFlight.current = true;
     setIsResolvingOaPdf(true);
     setOaPdfProgress(0);
-    setOaPdfResolvedCount(searchResults.length - unresolvedSearchArticles.length);
+    setOaPdfResolvedCount(paginatedResults.length - unresolvedVisibleArticles.length);
 
     void (async () => {
       try {
-        const results = await resolveOAPdf(unresolvedSearchArticles, unpaywallEmail.trim() || undefined);
+        const results = await resolveOAPdf(unresolvedVisibleArticles, unpaywallEmail.trim() || undefined);
         if (cancelled) {
           return;
         }
         setOaPdfResolutions(results);
-        setOaPdfResolvedCount(searchResults.length);
+        setOaPdfResolvedCount(paginatedResults.length);
         setOaPdfProgress(100);
       } catch (error) {
         if (!cancelled) {
           console.error("Auto resolve OA PDF error:", error);
-          toast.error("Automatic OA PDF check failed. You can retry manually.");
+          toast.error("Automatic OA PDF check for this page failed. You can retry manually.");
         }
       } finally {
         autoResolveInFlight.current = false;
@@ -334,7 +342,7 @@ export function SearchResultsSection() {
     return () => {
       cancelled = true;
     };
-  }, [searchResults, unresolvedSearchArticles, setOaPdfResolutions, unpaywallEmail]);
+  }, [paginatedResults, setOaPdfResolutions, unpaywallEmail, unresolvedVisibleArticles]);
 
   const handleDownloadOaPdf = async (pmid: string) => {
     const item = searchResults.find((entry) => entry.pmid === pmid);
@@ -409,13 +417,45 @@ export function SearchResultsSection() {
               Search Results
             </h2>
             <p className="text-muted-foreground">
-              Review the articles first, then continue to the extraction setup below.
+              Review the loaded articles first, then continue to the extraction setup below.
             </p>
           </div>
           <Badge variant="outline" className="font-normal">
-            {selectedSearchPmids.length}/{searchResults.length} selected
+            {selectedSearchPmids.length}/{searchResults.length} loaded selected
           </Badge>
         </div>
+
+        {searchSession.source === "query" && (
+          <div className="mb-6 rounded-2xl border border-emerald-200/70 bg-emerald-50/55 p-4">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div className="space-y-1">
+                <div className="text-sm font-medium text-emerald-950">
+                  Current search session matched {searchSession.totalAvailable.toLocaleString()} PubMed articles.
+                </div>
+                <div className="text-sm text-emerald-900/85">
+                  {searchSession.sessionTotal.toLocaleString()} article{searchSession.sessionTotal === 1 ? "" : "s"} are in this
+                  working set, and {searchSession.loadedCount.toLocaleString()} are currently loaded for review.
+                </div>
+                <div className="text-xs text-emerald-800/80">
+                  OA PDF checks now run page by page so large result sets stay responsive. You can still extract all matched
+                  articles from the extraction panel.
+                </div>
+              </div>
+              {searchSession.hasMore && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-2 border-emerald-200 bg-white/80 text-emerald-900 hover:bg-emerald-100"
+                  onClick={handleLoadMore}
+                  disabled={isLoadingMore}
+                >
+                  {isLoadingMore ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                  Load next {Math.min(searchSession.loadSize, searchSession.sessionTotal - searchSession.loadedCount)}
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
 
         <div className="grid gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
           <div className="space-y-6">
@@ -541,8 +581,15 @@ export function SearchResultsSection() {
                   <span>{filteredResults.length} visible results</span>
                   <span>{fullTextCount} with PMC full text</span>
                   <span>Page {visiblePage} of {totalPages}</span>
-                  {searchSession.source === "query" && (
-                    <span>{searchResults.length}/{searchSession.totalAvailable} loaded</span>
+                  {searchSession.source === "query" ? (
+                    <span>
+                      {searchSession.loadedCount}/{searchSession.sessionTotal} loaded
+                      {searchSession.sessionTotal < searchSession.totalAvailable
+                        ? ` (from ${searchSession.totalAvailable} total matches)`
+                        : ""}
+                    </span>
+                  ) : (
+                    <span>{searchResults.length} loaded</span>
                   )}
                 </div>
               </div>
@@ -555,7 +602,7 @@ export function SearchResultsSection() {
                   disabled={isResolvingOaPdf}
                 >
                   {isResolvingOaPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShieldCheck className="w-4 h-4" />}
-                  Check OA PDF
+                  Check OA PDF (Page)
                 </Button>
                 <Button
                   variant="outline"
@@ -576,12 +623,12 @@ export function SearchResultsSection() {
                   }
                 >
                   {allResultsSelected ? <CheckSquare className="w-4 h-4" /> : <Square className="w-4 h-4" />}
-                  Select All
+                  Select Loaded
                 </Button>
               </div>
               <div className="text-xs text-muted-foreground">
                 {Object.keys(oaPdfByPmid).length === 0
-                  ? "OA PDF availability now starts automatically after search results appear. Batch download is fastest when PMC can serve the PDF directly."
+                  ? "OA PDF availability now starts automatically for the current page after results appear. Batch download is fastest when PMC can serve the PDF directly."
                   : selectedAvailableOaPmids.length === 0
                     ? "No checked OA PDF items are currently selected."
                     : selectedBatchStats.fallbackCount === 0
@@ -594,13 +641,13 @@ export function SearchResultsSection() {
               {oaPdfProgress !== null && (
                 <div className="rounded-xl border border-amber-200/70 bg-amber-50/50 p-3">
                   <div className="flex items-center justify-between gap-3 text-sm">
-                    <span className="font-medium text-amber-900">Checking legal OA PDF availability</span>
+                    <span className="font-medium text-amber-900">Checking legal OA PDF availability for this page</span>
                     <span className="text-amber-800">
-                      {oaPdfResolvedCount}/{searchResults.length} checked
+                      {oaPdfResolvedCount}/{paginatedResults.length} checked
                     </span>
                   </div>
                   <div className="mt-1 text-xs text-amber-800/80">
-                    Results are shown first, then the backend fills OA PDF availability in the background for unresolved articles.
+                    Results are shown first, then the backend fills OA PDF availability in the background for visible articles.
                   </div>
                 </div>
               )}
@@ -779,7 +826,7 @@ export function SearchResultsSection() {
                       disabled={isLoadingMore}
                     >
                       {isLoadingMore ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                      Load More
+                      Load next {Math.min(searchSession.loadSize, searchSession.sessionTotal - searchSession.loadedCount)}
                     </Button>
                   )}
                   <Button

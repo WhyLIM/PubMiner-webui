@@ -99,6 +99,17 @@ class SQLiteTaskStore:
                     updated_at TEXT NOT NULL,
                     PRIMARY KEY (pmid, model_name, schema_hash, text_hash)
                 );
+
+                CREATE TABLE IF NOT EXISTS search_sessions (
+                    session_id TEXT PRIMARY KEY,
+                    source TEXT NOT NULL,
+                    query TEXT NOT NULL DEFAULT '',
+                    total_available INTEGER NOT NULL DEFAULT 0,
+                    scope_limit INTEGER NOT NULL DEFAULT 0,
+                    pmids TEXT NOT NULL DEFAULT '[]',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
                 """
             )
             self._ensure_column(conn, "tasks", "request_payload", "TEXT")
@@ -411,3 +422,65 @@ class SQLiteTaskStore:
                 """,
                 (pmid, model_name, schema_hash, text_hash, payload, now, now),
             )
+
+    def save_search_session(
+        self,
+        *,
+        session_id: str,
+        source: str,
+        query: str,
+        total_available: int,
+        scope_limit: int,
+        pmids: List[str],
+    ) -> None:
+        now = utcnow_iso()
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO search_sessions (
+                    session_id, source, query, total_available, scope_limit, pmids, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id)
+                DO UPDATE SET
+                    source = excluded.source,
+                    query = excluded.query,
+                    total_available = excluded.total_available,
+                    scope_limit = excluded.scope_limit,
+                    pmids = excluded.pmids,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    session_id,
+                    source,
+                    query,
+                    int(total_available),
+                    int(scope_limit),
+                    json.dumps(pmids, ensure_ascii=False),
+                    now,
+                    now,
+                ),
+            )
+
+    def get_search_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT session_id, source, query, total_available, scope_limit, pmids, created_at, updated_at
+                FROM search_sessions
+                WHERE session_id = ?
+                """,
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                return None
+
+        return {
+            "session_id": row["session_id"],
+            "source": row["source"],
+            "query": row["query"],
+            "total_available": int(row["total_available"]),
+            "scope_limit": int(row["scope_limit"]),
+            "pmids": json.loads(row["pmids"] or "[]"),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }

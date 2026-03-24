@@ -72,13 +72,14 @@ const defaultCustomFields: CustomField[] = [
 ];
 
 export function ExtractionSetupSection() {
-  const { searchResults, selectedSearchPmids, addTask, setShowTasks, setShowResults } = useAppStore();
+  const { searchResults, selectedSearchPmids, searchSession, addTask, setShowTasks, setShowResults } = useAppStore();
 
   const [fetchCitations, setFetchCitations] = useState(false);
   const [customFields, setCustomFields] = useState<CustomField[]>([]);
   const [showExample, setShowExample] = useState(false);
   const [isAddFieldOpen, setIsAddFieldOpen] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
+  const [extractionScope, setExtractionScope] = useState<"selected" | "all_matched">("selected");
   const [newField, setNewField] = useState<Partial<CustomField>>({
     type: "text",
     name: "",
@@ -86,19 +87,25 @@ export function ExtractionSetupSection() {
     enumValues: [],
   });
   const [enumInput, setEnumInput] = useState("");
+  const canExtractAllMatched =
+    searchSession.source === "query" &&
+    Boolean(searchSession.searchSessionId) &&
+    searchSession.sessionTotal > searchResults.length;
+  const effectiveExtractionScope = canExtractAllMatched ? extractionScope : "selected";
 
   if (searchResults.length === 0) {
     return null;
   }
 
   const addCustomField = () => {
-    if (!newField.name?.trim()) return;
+    const fieldName = newField.name?.trim();
+    if (!fieldName) return;
 
     setCustomFields((current) => [
       ...current,
       {
         id: Date.now().toString(),
-        name: newField.name.trim(),
+        name: fieldName,
         description: newField.description || "",
         type: newField.type || "text",
         enumValues: newField.enumValues,
@@ -113,24 +120,34 @@ export function ExtractionSetupSection() {
     try {
       setIsStarting(true);
 
-      if (selectedSearchPmids.length === 0) {
+      if (effectiveExtractionScope !== "all_matched" && selectedSearchPmids.length === 0) {
         toast.error("Please select at least one article from the list first");
         return;
       }
 
       const extractionResponse = await startExtraction({
-        pmids: selectedSearchPmids,
+        pmids: effectiveExtractionScope === "all_matched" ? [] : selectedSearchPmids,
         custom_fields: customFields.length > 0 ? customFields : null,
         fetch_citations: fetchCitations,
+        search_session_id:
+          effectiveExtractionScope === "all_matched" ? searchSession.searchSessionId ?? undefined : undefined,
+        scope: effectiveExtractionScope,
       });
 
       addTask({
         id: extractionResponse.task_id,
-        query: "Selected Articles",
-        pmids: selectedSearchPmids,
+        query:
+          effectiveExtractionScope === "all_matched"
+            ? searchSession.query || "Matched Articles"
+            : "Selected Articles",
+        pmids: effectiveExtractionScope === "all_matched" ? undefined : selectedSearchPmids,
         status: "pending",
         progress: 0,
-        total: selectedSearchPmids.length,
+        total:
+          extractionResponse.article_count ??
+          (effectiveExtractionScope === "all_matched"
+            ? searchSession.sessionTotal
+            : selectedSearchPmids.length),
         completed: 0,
         failed: 0,
         createdAt: new Date().toISOString(),
@@ -142,7 +159,11 @@ export function ExtractionSetupSection() {
 
       setShowTasks(true);
       setShowResults(false);
-      toast.success("Extraction task started");
+      toast.success(
+        effectiveExtractionScope === "all_matched"
+          ? `Extraction task started for all ${searchSession.sessionTotal} matched articles`
+          : "Extraction task started"
+      );
 
       setTimeout(() => {
         document.getElementById("tasks")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -172,13 +193,44 @@ export function ExtractionSetupSection() {
             <CardTitle className="text-lg">Selected Scope</CardTitle>
             <div className="flex flex-wrap gap-2 text-sm text-muted-foreground">
               <Badge variant="outline" className="font-normal">
-                {selectedSearchPmids.length}/{searchResults.length} selected
+                {selectedSearchPmids.length}/{searchResults.length} loaded selected
               </Badge>
-              <span>Only selected articles will be sent for extraction.</span>
+              {canExtractAllMatched ? (
+                <span>Backend session keeps {searchSession.sessionTotal} matched articles ready for full extraction.</span>
+              ) : (
+                <span>Only selected loaded articles will be sent for extraction.</span>
+              )}
             </div>
           </CardHeader>
 
           <CardContent className="space-y-6">
+            {canExtractAllMatched && (
+              <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_220px]">
+                <div className="rounded-lg border border-border/50 bg-background px-4 py-3">
+                  <div className="text-sm font-medium">Extraction Target</div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Use the fast paged browser for review, then decide whether extraction should run on the loaded selection
+                    or on the entire matched query stored on the backend.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label>Run On</Label>
+                  <Select
+                    value={effectiveExtractionScope}
+                    onValueChange={(value: "selected" | "all_matched") => setExtractionScope(value)}
+                  >
+                    <SelectTrigger className="bg-background">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="bg-popover">
+                      <SelectItem value="selected">Selected loaded ({selectedSearchPmids.length})</SelectItem>
+                      <SelectItem value="all_matched">All matched ({searchSession.sessionTotal})</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            )}
+
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
                 <Label>LLM Model</Label>
@@ -421,13 +473,22 @@ export function ExtractionSetupSection() {
 
             <div className="flex flex-wrap items-center justify-between gap-4 border-t border-border/50 pt-6">
               <div className="text-sm text-muted-foreground">
-                The extraction task will run on <span className="font-medium text-foreground">{selectedSearchPmids.length}</span> selected articles.
+                The extraction task will run on{" "}
+                <span className="font-medium text-foreground">
+                  {effectiveExtractionScope === "all_matched" ? searchSession.sessionTotal : selectedSearchPmids.length}
+                </span>{" "}
+                {effectiveExtractionScope === "all_matched" ? "matched" : "selected"} articles.
               </div>
               <Button
                 size="lg"
                 className="gap-2 px-8"
                 onClick={handleStartExtraction}
-                disabled={isStarting || selectedSearchPmids.length === 0}
+                disabled={
+                  isStarting ||
+                  (effectiveExtractionScope === "all_matched"
+                    ? !searchSession.searchSessionId
+                    : selectedSearchPmids.length === 0)
+                }
               >
                 {isStarting ? (
                   <>

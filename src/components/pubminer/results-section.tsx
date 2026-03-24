@@ -324,7 +324,9 @@ export function ResultsSection() {
   const [selectedColumns, setSelectedColumns] = useState<string[]>(DEFAULT_PREVIEW_COLUMNS);
   const [previewMode, setPreviewMode] = useState<"all" | "metadata" | "extraction">("all");
 
-  const latestCompletedTask = tasks.find((t) => t.status === "completed" && t.resultFile);
+  const latestResultTask = tasks.find(
+    (t) => (t.status === "completed" || t.status === "partial") && t.resultFile
+  );
 
   const loadPreview = async (
     filename: string,
@@ -345,9 +347,9 @@ export function ResultsSection() {
   };
 
   useEffect(() => {
-    if (!showResults || !latestCompletedTask?.resultFile) return;
-    loadPreview(latestCompletedTask.resultFile, previewMode);
-  }, [showResults, latestCompletedTask?.resultFile, previewMode]);
+    if (!showResults || !latestResultTask?.resultFile) return;
+    loadPreview(latestResultTask.resultFile, previewMode);
+  }, [showResults, latestResultTask?.resultFile, previewMode]);
 
   const visibleColumns = useMemo(() => {
     if (!preview) return [];
@@ -368,7 +370,7 @@ export function ResultsSection() {
     [columnGroups]
   );
 
-  const articleReport = latestCompletedTask?.articleReport || [];
+  const articleReport = latestResultTask?.articleReport || [];
   const articleSummary = useMemo(() => {
     return {
       fullTable: articleReport.filter((item) => item.result_status === "full_table").length,
@@ -378,15 +380,15 @@ export function ResultsSection() {
     };
   }, [articleReport]);
 
-  if (!showResults || !latestCompletedTask) {
+  if (!showResults || !latestResultTask) {
     return null;
   }
 
   const handleDownload = async (mode: "all" | "metadata" | "extraction") => {
-    if (!latestCompletedTask.resultFile) return;
+    if (!latestResultTask.resultFile) return;
 
     try {
-      const filename = latestCompletedTask.resultFile.split("/").pop() || latestCompletedTask.resultFile;
+      const filename = latestResultTask.resultFile.split("/").pop() || latestResultTask.resultFile;
       const download = await downloadResults(filename, mode);
 
       const url = URL.createObjectURL(download.blob);
@@ -440,11 +442,11 @@ export function ResultsSection() {
           <div>
             <h2 className="mb-2 font-serif text-3xl font-normal md:text-4xl">Extraction Results</h2>
             <p className="text-muted-foreground">
-              Structured information extracted from {latestCompletedTask.total} articles
+              Structured information extracted from {latestResultTask.total} articles
             </p>
           </div>
           <Badge variant="secondary" className="w-fit font-normal">
-            {latestCompletedTask.completed} Extracted
+            {latestResultTask.completed} Extracted
           </Badge>
         </div>
 
@@ -458,7 +460,7 @@ export function ResultsSection() {
               variant="ghost"
               size="sm"
               className="gap-2 self-start md:self-auto"
-              onClick={() => latestCompletedTask.resultFile && loadPreview(latestCompletedTask.resultFile, previewMode)}
+              onClick={() => latestResultTask.resultFile && loadPreview(latestResultTask.resultFile, previewMode)}
               disabled={isLoadingPreview}
             >
               {isLoadingPreview ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
@@ -470,19 +472,19 @@ export function ResultsSection() {
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               <Card>
                 <CardContent className="pt-6">
-                  <div className="text-2xl font-bold">{latestCompletedTask.total}</div>
+                  <div className="text-2xl font-bold">{latestResultTask.total}</div>
                   <p className="text-sm text-muted-foreground">Total Articles</p>
                 </CardContent>
               </Card>
               <Card>
                 <CardContent className="pt-6">
-                  <div className="text-2xl font-bold text-emerald-600">{latestCompletedTask.completed}</div>
+                  <div className="text-2xl font-bold text-emerald-600">{latestResultTask.completed}</div>
                   <p className="text-sm text-muted-foreground">Successfully Extracted</p>
                 </CardContent>
               </Card>
               <Card>
                 <CardContent className="pt-6">
-                  <div className="text-2xl font-bold text-red-600">{latestCompletedTask.failed}</div>
+                  <div className="text-2xl font-bold text-red-600">{latestResultTask.failed}</div>
                   <p className="text-sm text-muted-foreground">Failed</p>
                 </CardContent>
               </Card>

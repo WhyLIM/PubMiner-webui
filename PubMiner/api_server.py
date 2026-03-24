@@ -23,7 +23,7 @@ if sys.platform == 'win32':
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import pandas as pd
 import uvicorn
 from fastapi.responses import FileResponse, Response
@@ -76,6 +76,8 @@ class SearchRequest(BaseModel):
     query: str
     max_results: int = 100
     offset: int = 0
+    load_size: int = 50
+    search_session_id: Optional[str] = None
 
 
 class PMIDRequest(BaseModel):
@@ -90,9 +92,11 @@ class CustomFieldPayload(BaseModel):
 
 
 class ExtractionRequest(BaseModel):
-    pmids: List[str]
+    pmids: List[str] = Field(default_factory=list)
     custom_fields: Optional[List[CustomFieldPayload]] = None
     fetch_citations: bool = False  # Whether to fetch citation metadata
+    search_session_id: Optional[str] = None
+    scope: str = "selected"  # selected | all_matched
 
 
 class RetryTaskRequest(BaseModel):
@@ -196,6 +200,41 @@ def chunk_items(items: List[Any], chunk_size: int) -> List[List[Any]]:
 def stable_hash(value: str) -> str:
     """Hash a string into a stable cache key."""
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def build_search_session_id(query: str, max_results: int) -> str:
+    """Create a stable-enough id for a persisted search session."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    short_hash = stable_hash(f"{query}|{max_results}|{timestamp}")[:10]
+    return f"search_{timestamp}_{short_hash}"
+
+
+def clamp_search_load_size(load_size: int, session_total: int) -> int:
+    """Keep search page sizes bounded for responsive UI loads."""
+    if session_total <= 0:
+        return 0
+    return max(1, min(load_size, 100, session_total))
+
+
+def metadata_to_search_result(meta: Any) -> Dict[str, Any]:
+    """Convert a metadata model into the frontend search result shape."""
+    meta_dict = meta.model_dump() if hasattr(meta, "model_dump") else meta.dict()
+    return {
+        "pmid": meta_dict.get("pmid"),
+        "title": meta_dict.get("title"),
+        "authors": meta_dict.get("authors", []),
+        "firstAuthor": meta_dict.get("first_author", ""),
+        "affiliation": meta_dict.get("affiliation", ""),
+        "journal": meta_dict.get("journal"),
+        "year": str(meta_dict.get("year") or ""),
+        "articleType": meta_dict.get("article_type", ""),
+        "publicationStatus": meta_dict.get("publication_status", ""),
+        "language": meta_dict.get("language", ""),
+        "doi": meta_dict.get("doi"),
+        "abstract": meta_dict.get("abstract", ""),
+        "hasFullText": meta_dict.get("pmcid") is not None,
+        "pmcid": meta_dict.get("pmcid"),
+    }
 
 
 def build_schema_hash(schema_model: Any) -> str:
@@ -411,47 +450,57 @@ async def search_pubmed(request: SearchRequest):
             rate_limit=config.ncbi.rate_limit
         )
 
-        # Search and fetch metadata
-        search_result = await client.search(
-            request.query,
-            max_results=request.max_results,
-            offset=request.offset,
-        )
-        pmids = search_result["pmids"]
-        metadata_list = await client.fetch_metadata(pmids, include_citations=False)
+        if request.search_session_id:
+            search_session = get_task_store().get_search_session(request.search_session_id)
+            if search_session is None:
+                raise HTTPException(status_code=404, detail="Search session not found")
+            session_id = search_session["session_id"]
+            query = search_session["query"]
+            session_pmids = search_session["pmids"]
+            total_available = search_session["total_available"]
+            scope_limit = search_session["scope_limit"]
+        else:
+            search_result = await client.search(
+                request.query,
+                max_results=request.max_results,
+                offset=0,
+            )
+            session_pmids = search_result["pmids"]
+            total_available = search_result["total_count"]
+            scope_limit = request.max_results
+            query = request.query
+            session_id = build_search_session_id(request.query, request.max_results)
+            get_task_store().save_search_session(
+                session_id=session_id,
+                source="query",
+                query=request.query,
+                total_available=total_available,
+                scope_limit=scope_limit,
+                pmids=session_pmids,
+            )
 
-        # Convert to dict
-        results = []
-        for meta in metadata_list:
-            meta_dict = meta.model_dump() if hasattr(meta, 'model_dump') else meta.dict()
-            results.append({
-                "pmid": meta_dict.get("pmid"),
-                "title": meta_dict.get("title"),
-                "authors": meta_dict.get("authors", []),
-                "firstAuthor": meta_dict.get("first_author", ""),
-                "affiliation": meta_dict.get("affiliation", ""),
-                "journal": meta_dict.get("journal"),
-                "year": str(meta_dict.get("year") or ""),
-                "articleType": meta_dict.get("article_type", ""),
-                "publicationStatus": meta_dict.get("publication_status", ""),
-                "language": meta_dict.get("language", ""),
-                "doi": meta_dict.get("doi"),
-                "abstract": meta_dict.get("abstract", ""),
-                "hasFullText": meta_dict.get("pmcid") is not None,
-                "pmcid": meta_dict.get("pmcid")
-            })
+        safe_offset = max(0, request.offset)
+        safe_load_size = clamp_search_load_size(request.load_size, len(session_pmids))
+        page_pmids = session_pmids[safe_offset:safe_offset + safe_load_size]
+        metadata_list = await client.fetch_metadata(page_pmids, include_citations=False)
+        results = [metadata_to_search_result(meta) for meta in metadata_list]
 
         return {
             "success": True,
-            "query": request.query,
+            "query": query,
             "total": len(results),
-            "total_available": search_result["total_count"],
-            "offset": request.offset,
+            "total_available": total_available,
+            "session_total": len(session_pmids),
+            "search_session_id": session_id,
+            "offset": safe_offset,
+            "load_size": safe_load_size,
             "returned_count": len(results),
-            "has_more": request.offset + len(results) < search_result["total_count"],
+            "has_more": safe_offset + len(results) < len(session_pmids),
             "results": results
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Search error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -624,16 +673,33 @@ async def download_oa_pdfs(request: OAPdfBatchDownloadRequest):
 @app.post("/api/extract")
 async def extract_information(request: ExtractionRequest, background_tasks: BackgroundTasks):
     """Extract structured information from articles"""
+    if request.scope == "all_matched":
+        if not request.search_session_id:
+            raise HTTPException(status_code=400, detail="search_session_id is required for all_matched extraction")
+        search_session = get_task_store().get_search_session(request.search_session_id)
+        if search_session is None:
+            raise HTTPException(status_code=404, detail="Search session not found")
+        effective_pmids = search_session["pmids"]
+        task_query = search_session["query"] or "Matched Articles"
+    else:
+        effective_pmids = request.pmids
+        task_query = "Selected Articles"
+
+    if not effective_pmids:
+        raise HTTPException(status_code=400, detail="No PMIDs were provided for extraction")
+
     task_id = f"task_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     # Initialize task status in the local task database.
     get_task_store().create_task(
         task_id,
-        request.pmids,
+        effective_pmids,
         request_payload={
-            "pmids": request.pmids,
+            "pmids": effective_pmids,
             "custom_fields": [field.model_dump() for field in request.custom_fields or []],
             "fetch_citations": request.fetch_citations,
+            "search_session_id": request.search_session_id,
+            "scope": request.scope,
         },
     )
 
@@ -641,7 +707,7 @@ async def extract_information(request: ExtractionRequest, background_tasks: Back
     background_tasks.add_task(
         run_extraction_task,
         task_id,
-        request.pmids,
+        effective_pmids,
         request.custom_fields,
         request.fetch_citations
     )
@@ -649,6 +715,8 @@ async def extract_information(request: ExtractionRequest, background_tasks: Back
     return {
         "success": True,
         "task_id": task_id,
+        "article_count": len(effective_pmids),
+        "query": task_query,
         "message": "Extraction task started"
     }
 

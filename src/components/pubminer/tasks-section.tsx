@@ -132,6 +132,9 @@ export function TasksSection() {
           }
 
           if (status.status === "partial") {
+            if (status.result_file) {
+              setShowResults(true);
+            }
             toast.error(`Task ${task.id} completed with partial failures.`);
           }
 
@@ -359,7 +362,7 @@ export function TasksSection() {
         </div>
 
         <div className="grid gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
-          <Card className="border-border/50">
+          <Card className="flex min-h-[640px] flex-col border-border/50">
             <CardHeader className="space-y-4">
               <div>
                 <CardTitle className="text-lg">Task Queue</CardTitle>
@@ -375,8 +378,12 @@ export function TasksSection() {
               </Tabs>
             </CardHeader>
 
-            <CardContent className="space-y-4 pt-0">
-              <ScrollArea className={`${activeTask?.chunkReport?.length ? "h-[360px]" : "h-[560px]"} pr-3`}>
+            <CardContent className="flex min-h-0 flex-1 flex-col gap-3 pt-0">
+              <ScrollArea
+                className={`pr-3 ${
+                  activeTask?.chunkReport?.length ? "h-[320px]" : "flex-1 min-h-0"
+                }`}
+              >
                 <div className="space-y-3">
                   {filteredTasks.map((task) => {
                     const config = statusConfig[task.status as keyof typeof statusConfig];
@@ -390,7 +397,7 @@ export function TasksSection() {
                         key={task.id}
                         type="button"
                         onClick={() => setSelectedTaskId(task.id)}
-                        className={`w-full rounded-xl border p-4 text-left transition-colors ${
+                        className={`w-full min-w-0 overflow-hidden rounded-xl border p-4 text-left transition-colors ${
                           isActive
                             ? "border-primary/40 bg-muted/50"
                             : "border-border/50 bg-background hover:bg-muted/30"
@@ -404,18 +411,20 @@ export function TasksSection() {
                               />
                             </div>
                             <div className="min-w-0 space-y-1">
-                              <div className="truncate font-medium">{task.query}</div>
+                              <div className="line-clamp-2 break-words pr-1 font-medium leading-5">
+                                {task.query}
+                              </div>
                               <div className="text-xs text-muted-foreground">
                                 {new Date(task.createdAt).toLocaleString()}
                               </div>
                               {task.message && (
-                                <div className="line-clamp-2 text-xs text-muted-foreground">
+                                <div className="line-clamp-2 break-words text-xs text-muted-foreground">
                                   {task.message}
                                 </div>
                               )}
                             </div>
                           </div>
-                          <Badge variant={config.badge} className="capitalize font-normal">
+                          <Badge variant={config.badge} className="shrink-0 capitalize font-normal">
                             {task.status}
                           </Badge>
                         </div>
