@@ -10,11 +10,11 @@ It combines:
 The current workflow is:
 
 1. Search PubMed or paste PMIDs
-2. Review article metadata and summary charts
-3. Select articles
-4. Configure LLM extraction fields
-5. Run extraction tasks
-6. Preview and download CSV outputs
+2. Load the first page of article metadata while the full PMID set is saved as a backend search session
+3. Review article metadata, charts, and automatic current-page OA PDF checks
+4. Select loaded articles or target the full matched search session
+5. Run chunked extraction tasks with persistent task tracking
+6. Preview and download CSV outputs for completed or partial runs
 
 ## Architecture
 
@@ -65,7 +65,10 @@ Main backend areas:
 
 - PubMed query builder
 - direct PMID list import
-- incremental loading for search results
+- session-backed incremental loading for search results
+- first-page metadata loading for large queries
+- current-page automatic OA PDF checking
+- manual current-page OA refresh and batch OA PDF download
 - metadata review before extraction
 - article filtering and selection
 - PubMed-style result statistics, including year distribution
@@ -73,27 +76,32 @@ Main backend areas:
 ### Extraction Workflow
 
 - search and extraction are separated into distinct steps
+- extraction can target either selected loaded articles or the full matched backend search session
 - built-in extraction schema for common literature fields
 - custom extraction field support
 - optional citation fetching
 - PMC full-text retrieval with structured section parsing
 - fallback full-text assembly when section parsing is weak
 - article-level extraction status tracking
+- extraction cache keyed by PMID, schema, model, and text hash
+- chunk-based processing for large runs
 
 ### Task Diagnostics
 
-- task queue and task detail panel
+- persistent SQLite-backed task queue and task detail panel
 - full-text download report
 - fallback usage report
 - cache hit reporting
 - citation status reporting
 - article mapping from search result to final output row
+- chunk progress reporting and retry actions for failed chunks or failed articles
 
 ### Result Handling
 
 - preview extracted CSV data in the UI
 - switch between `Metadata`, `LLM`, and `Full` preview modes
 - grouped visible-column controls
+- result preview and CSV download for both `completed` and `partial` tasks
 - multiple CSV download modes:
   - metadata only
   - LLM fields only
@@ -104,18 +112,20 @@ Main backend areas:
 The backend uses the following retrieval flow:
 
 1. `Entrez.esearch`
-   Find PMIDs from a PubMed query
-2. `Entrez.efetch`
-   Fetch PubMed XML metadata for those PMIDs
+   Find PMIDs from a PubMed query and persist them as a backend search session
+2. paged `Entrez.efetch`
+   Fetch PubMed XML metadata only for the currently loaded slice
 3. optional `Entrez.elink`
    Fetch citation and reference links when enabled
 4. `PMC BioC API`
    Download full text for records with a PMCID
-5. section parser + fallback
+5. OA PDF resolver
+   Resolve legal OA PDF candidates with PMC-first logic plus optional DOI fallbacks
+6. section parser + fallback
    Build usable extraction text from PMC content
-6. `ZhipuExtractor`
+7. `ZhipuExtractor`
    Extract structured fields with a schema-driven prompt
-7. `CSVExporter`
+8. `CSVExporter`
    Merge metadata and LLM results into ordered CSV output
 
 ## Recent Engineering Improvements
@@ -123,6 +133,7 @@ The backend uses the following retrieval flow:
 This project has already been improved beyond the initial scaffold. Notable changes include:
 
 - search preview and LLM extraction split into separate UX stages
+- search sessions added so large query sets no longer require full metadata hydration before first render
 - dynamic custom extraction fields wired end-to-end
 - result preview in the frontend
 - article-level mapping between search results and extraction outputs
@@ -130,6 +141,10 @@ This project has already been improved beyond the initial scaffold. Notable chan
 - citation fetching enabled only when requested
 - citation fetching parallelized with the main extraction flow
 - enhanced section parsing with fallback logic
+- PubMed metadata retry and split-batch fallback for incomplete reads
+- OA PDF resolution narrowed to current-page automatic checks for large result sets
+- extraction scope can now use the full matched backend search session
+- task and search-session state persisted locally in SQLite
 - CSV export modes and stable output naming
 - richer bibliographic metadata surfaced before extraction
 
@@ -168,7 +183,7 @@ Use the root directories with the following intent:
 - Runtime artifacts
   - `download/` for PMC BioC cache and OA PDF cache
   - `output/` for exported CSV files and checkpoints
-  - `db/` for local SQLite files when needed
+  - `db/` for local SQLite files, including persisted task and search-session state
 - Local machine only
   - `.venv/`, `.env.local`, `.tmp/`, and local log files are environment-specific and should not be treated as source files
 
@@ -245,6 +260,7 @@ Important sections:
 - `output`
 - `checkpoint`
 - `oa_pdf`
+- `database`
 
 Example PMIDs for quick manual testing live in:
 
@@ -293,17 +309,19 @@ pubminer_extract_20260313_153000_10articles_2custom.csv
 
 ## Known Limitations
 
-- task storage is still in memory and is not persistent across backend restarts
+- very large searches still require manual `Load next ...` pagination after the first page
+- automatic OA PDF checks are intentionally limited to the current visible page for responsiveness
 - some PMC articles still require fallback full-text assembly
 - repository-wide lint and type-check noise still exists in unrelated legacy or example areas
+- the current full-project TypeScript check is still blocked by the existing `src/lib/db.ts` Prisma issue
 - secret management still needs cleanup
 
 ## Recommended Next Steps
 
 If you continue productizing this project, the most natural next steps are:
 
-1. persist task state
-2. move secrets to environment variables
-3. add single-article retry flows
+1. move secrets to environment variables
+2. add optional background jobs for all-session OA PDF resolution
+3. virtualize or further aggregate very large loaded result lists in the frontend
 4. improve result table filtering and search
 5. add automated backend and frontend regression tests
