@@ -72,6 +72,13 @@ oa_pdf:
   cache_dir: "../download/pdf_cache"
   timeout: 30
   max_retries: 3
+  resolve_concurrency: 8
+  pmc_download_concurrency: 8
+  fallback_download_concurrency: 3
+  pmc_timeout: 30
+  fallback_timeout: 15
+  pmc_max_retries: 2
+  fallback_max_retries: 1
   cache_only_when_license_known: true
   enable_pmc: true
   enable_unpaywall: true

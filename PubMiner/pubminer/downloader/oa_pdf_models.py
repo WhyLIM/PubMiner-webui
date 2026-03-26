@@ -53,5 +53,6 @@ class OAPdfDownloadRecord(BaseModel):
     sha256: Optional[str] = Field(None, description="SHA-256 hash of downloaded file")
     license: Optional[str] = Field(None, description="License recorded alongside the file")
     cached: bool = Field(False, description="Whether the file was served from cache")
+    elapsed_ms: Optional[int] = Field(None, description="Elapsed milliseconds spent resolving/downloading this record")
     downloaded_at: str = Field(..., description="UTC ISO timestamp")
     error: Optional[str] = Field(None, description="Failure reason if any")

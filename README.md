@@ -244,6 +244,57 @@ From the project root you can also use:
 
 This script always uses [\.venv\Scripts\python.exe](/D:/Study/Project/PubMiner2/.venv/Scripts/python.exe), starts [api_server.py](/D:/Study/Project/PubMiner2/PubMiner/api_server.py) from the correct backend directory, and warns if port `8000` is already occupied.
 
+### 3. Command Line Interface
+
+The backend package now also supports direct CLI usage.
+
+Run commands from [PubMiner](/D:/Study/Project/PubMiner2/PubMiner):
+
+```powershell
+D:\Study\Project\PubMiner2\.venv\Scripts\python.exe -m pubminer.cli.main --help
+```
+
+Available subcommands:
+
+- `search`
+  Search PubMed, persist a local search session, and preview the first loaded page
+- `oa-check`
+  Resolve legal OA PDF availability for PMIDs, a PMID file, or a saved search session
+- `oa-download`
+  Download legal OA PDFs with the same PMC-first strategy used by the web app
+- `extract`
+  Run extraction from PMIDs or a saved search session using the same persisted task/chunk flow as the web app
+- `tasks`
+  Inspect persisted extraction tasks or saved search sessions in local SQLite
+- `pipeline`
+  Run the older all-in-one CLI pipeline for backward compatibility
+
+Common examples:
+
+```powershell
+# Create a saved search session
+D:\Study\Project\PubMiner2\.venv\Scripts\python.exe -m pubminer.cli.main search -q "aging[tiab]" --max-results 20 --load-size 5
+
+# Check OA PDF availability for a few PMIDs
+D:\Study\Project\PubMiner2\.venv\Scripts\python.exe -m pubminer.cli.main oa-check --pmids 31452104 41876404 --limit 2
+
+# Download OA PDFs and write a manifest
+D:\Study\Project\PubMiner2\.venv\Scripts\python.exe -m pubminer.cli.main oa-download --session-id <search_session_id> --limit 10 --manifest-out ..\\output\\oa_manifest.json --zip-output ..\\output\\oa_pdfs.zip
+
+# Run extraction against a saved search session
+D:\Study\Project\PubMiner2\.venv\Scripts\python.exe -m pubminer.cli.main extract --session-id <search_session_id>
+
+# Inspect local tasks and sessions
+D:\Study\Project\PubMiner2\.venv\Scripts\python.exe -m pubminer.cli.main tasks --view tasks --limit 10
+D:\Study\Project\PubMiner2\.venv\Scripts\python.exe -m pubminer.cli.main tasks --view sessions --limit 10
+```
+
+Notes:
+
+- CLI and web extraction now share the same persisted task format in [db/pubminer_tasks.db](/D:/Study/Project/PubMiner2/db/pubminer_tasks.db)
+- `extract` creates the same `task_id`, `article_report`, `chunk_report`, and `result_file` records that the task panel reads in the web app
+- `oa-check` and `oa-download` can use `--query`, `--file`, `--session-id`, or inline `--pmids`
+
 ## Configuration
 
 Backend configuration lives in:

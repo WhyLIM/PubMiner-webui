@@ -42,6 +42,11 @@ from pubminer.exporter.column_mapping import COLUMN_MAPPING
 from pubminer.exporter.csv_writer import CSVExporter
 from pubminer.core.logger import get_logger
 from pubminer.core.task_store import SQLiteTaskStore
+from pubminer.core.extraction_tasks import (
+    build_task_id as build_persisted_task_id,
+    create_extraction_task as create_persisted_extraction_task,
+    run_extraction_task as run_persisted_extraction_task,
+)
 
 logger = get_logger("api")
 
@@ -371,6 +376,7 @@ def build_oa_pdf_resolver(unpaywall_email: Optional[str] = None) -> OAPdfResolve
         enable_pmc=config.oa_pdf.enable_pmc,
         enable_unpaywall=config.oa_pdf.enable_unpaywall,
         enable_europepmc=config.oa_pdf.enable_europepmc,
+        resolve_concurrency=config.oa_pdf.resolve_concurrency,
     )
 
 
@@ -603,8 +609,8 @@ async def download_oa_pdfs(request: OAPdfBatchDownloadRequest):
 
         if pmc_first_articles:
             fast_resolver = OAPdfResolver(
-                timeout=config.oa_pdf.timeout,
-                max_retries=config.oa_pdf.max_retries,
+                timeout=config.oa_pdf.pmc_timeout,
+                max_retries=config.oa_pdf.pmc_max_retries,
                 prefer_pmc=config.oa_pdf.prefer_pmc,
                 strict_oa=config.oa_pdf.strict_oa,
                 cache_dir=config.oa_pdf.cache_dir,
@@ -613,8 +619,12 @@ async def download_oa_pdfs(request: OAPdfBatchDownloadRequest):
                 enable_pmc=config.oa_pdf.enable_pmc,
                 enable_unpaywall=False,
                 enable_europepmc=False,
+                resolve_concurrency=config.oa_pdf.resolve_concurrency,
             )
-            fast_records = await fast_resolver.download_many(pmc_first_articles, concurrency=3)
+            fast_records = await fast_resolver.download_many(
+                pmc_first_articles,
+                concurrency=config.oa_pdf.pmc_download_concurrency,
+            )
             for record in fast_records:
                 records_by_pmid[record.pmid] = record
 
@@ -630,8 +640,23 @@ async def download_oa_pdfs(request: OAPdfBatchDownloadRequest):
         retry_articles.extend(fallback_only_articles)
 
         if retry_articles:
-            fallback_resolver = build_oa_pdf_resolver(request.unpaywall_email)
-            fallback_records = await fallback_resolver.download_many(retry_articles, concurrency=3)
+            fallback_resolver = OAPdfResolver(
+                timeout=config.oa_pdf.fallback_timeout,
+                max_retries=config.oa_pdf.fallback_max_retries,
+                prefer_pmc=config.oa_pdf.prefer_pmc,
+                strict_oa=config.oa_pdf.strict_oa,
+                cache_dir=config.oa_pdf.cache_dir,
+                cache_only_when_license_known=config.oa_pdf.cache_only_when_license_known,
+                unpaywall_email=request.unpaywall_email or config.oa_pdf.unpaywall_email,
+                enable_pmc=config.oa_pdf.enable_pmc,
+                enable_unpaywall=config.oa_pdf.enable_unpaywall,
+                enable_europepmc=config.oa_pdf.enable_europepmc,
+                resolve_concurrency=config.oa_pdf.resolve_concurrency,
+            )
+            fallback_records = await fallback_resolver.download_many(
+                retry_articles,
+                concurrency=config.oa_pdf.fallback_download_concurrency,
+            )
             for record in fallback_records:
                 records_by_pmid[record.pmid] = record
 
@@ -688,19 +713,14 @@ async def extract_information(request: ExtractionRequest, background_tasks: Back
     if not effective_pmids:
         raise HTTPException(status_code=400, detail="No PMIDs were provided for extraction")
 
-    task_id = f"task_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-
-    # Initialize task status in the local task database.
-    get_task_store().create_task(
-        task_id,
-        effective_pmids,
-        request_payload={
-            "pmids": effective_pmids,
-            "custom_fields": [field.model_dump() for field in request.custom_fields or []],
-            "fetch_citations": request.fetch_citations,
-            "search_session_id": request.search_session_id,
-            "scope": request.scope,
-        },
+    task_id = create_persisted_extraction_task(
+        get_task_store(),
+        pmids=effective_pmids,
+        custom_fields=request.custom_fields,
+        fetch_citations=request.fetch_citations,
+        search_session_id=request.search_session_id,
+        scope=request.scope,
+        task_id=build_persisted_task_id(),
     )
 
     # Add to background tasks
@@ -727,363 +747,15 @@ async def run_extraction_task(
     custom_fields: Optional[List[CustomFieldPayload]],
     fetch_citations: bool = False
 ):
-    """Background task for extraction"""
-    chunk_report: List[Dict[str, Any]] = []
-    try:
-        persist_task(task_id, status="running", message="Fetching metadata...", progress=0.1)
-
-        # Fetch metadata
-        client = AsyncPubMedClient(
-            email=config.ncbi.email,
-            api_key=config.ncbi.api_key,
-            tool_name=config.ncbi.tool_name,
-            rate_limit=config.ncbi.rate_limit
-        )
-
-        citation_task = None
-        citation_client = None
-
-        # Fetch metadata first, then optionally fetch citations in parallel
-        if fetch_citations:
-            metadata_list = await client.fetch_metadata(pmids, include_citations=False)
-            citation_client = AsyncPubMedClient(
-                email=config.ncbi.email,
-                api_key=config.ncbi.api_key,
-                tool_name=config.ncbi.tool_name,
-                rate_limit=config.ncbi.rate_limit
-            )
-            citation_report = {
-                "enabled": True,
-                "status": "running",
-                "message": "Citation data is being fetched in parallel.",
-                "cited_by_status": "pending",
-                "references_status": "pending",
-                "cited_by_total": 0,
-                "references_total": 0,
-            }
-            persist_task(task_id, citation_report=citation_report)
-            citation_task = asyncio.create_task(citation_client.fetch_citation_data(pmids))
-        else:
-            metadata_list = await client.fetch_metadata(pmids, include_citations=False)
-            citation_report = {
-                "enabled": False,
-                "status": "disabled",
-                "message": "Citation fetching was turned off for this task.",
-                "cited_by_status": "disabled",
-                "references_status": "disabled",
-                "cited_by_total": 0,
-                "references_total": 0,
-            }
-            persist_task(task_id, citation_report=citation_report)
-
-        article_report: Dict[str, Dict[str, Any]] = {}
-        for metadata in metadata_list:
-            article_report[metadata.pmid] = {
-                "pmid": metadata.pmid,
-                "pmcid": metadata.pmcid,
-                "title": metadata.title,
-                "journal": metadata.journal,
-                "year": metadata.year,
-                "has_fulltext": bool(metadata.pmcid),
-                "citation_status": "pending" if fetch_citations else "disabled",
-                "fulltext_status": "pending" if metadata.pmcid else "no_pmc",
-                "oa_pdf_status": "pending",
-                "extraction_status": "pending" if metadata.pmcid else "skipped",
-                "result_status": "pending",
-                "error": "",
-            }
-        persist_task(task_id, article_report=list(article_report.values()))
-
-        chunk_size = config.extraction.task_chunk_size
-        metadata_chunks = chunk_items(metadata_list, chunk_size)
-        total_chunks = max(len(metadata_chunks), 1)
-        aggregated_fulltext_report = create_empty_fulltext_report()
-        aggregated_extraction_report = create_empty_extraction_report()
-        extraction_results: List[Dict[str, Any]] = []
-        chunk_report = [
-            {
-                "chunk_index": index,
-                "article_count": len(metadata_chunk),
-                "status": "pending",
-                "fulltext_downloaded": 0,
-                "extraction_success": 0,
-                "extraction_failed": 0,
-                "cached_hits": 0,
-                "pmids": [metadata.pmid for metadata in metadata_chunk],
-                "message": "Waiting to start",
-            }
-            for index, metadata_chunk in enumerate(metadata_chunks, start=1)
-        ]
-        persist_task(task_id, chunk_report=chunk_report)
-
-        # Build extraction schema once and reuse it across chunks.
-
-        schema_model = BaseExtractionModel
-        custom_output_columns: List[str] = []
-        if custom_fields:
-            custom_definitions = []
-            for field in custom_fields:
-                field_type = "str"
-                if field.type == "number":
-                    field_type = "float"
-                elif field.type == "enum":
-                    field_type = "enum"
-
-                custom_definitions.append(
-                    CustomFieldDefinition(
-                        name=field.name,
-                        description=field.description,
-                        field_type=field_type,
-                        enum_values=field.enumValues or [],
-                    )
-                )
-                custom_output_columns.append(COLUMN_MAPPING.get(field.name, field.name))
-
-            schema_model = DynamicSchemaBuilder.create_custom_model(
-                custom_fields=custom_definitions,
-                model_name=f"Task{task_id.replace('-', '_')}ExtractionModel",
-            )
-
-        downloader = BioCAPIClient(
-            keep_sections=config.download.sections,
-            timeout=config.download.timeout,
-            max_retries=config.download.max_retries,
-            cache_dir=config.download.cache_dir,
-        )
-        extractor = ZhipuExtractor(
-            api_key=config.zhipu.api_key,
-            model=config.zhipu.model,
-            temperature=config.zhipu.temperature,
-            max_retries=config.extraction.max_retries,
-            use_coding_plan=config.zhipu.use_coding_plan
-        )
-        extraction_schema_hash = build_schema_hash(schema_model)
-        active_task_store = get_task_store()
-        had_chunk_failures = False
-
-        for chunk_index, metadata_chunk in enumerate(metadata_chunks, start=1):
-            chunk_pmids = [metadata.pmid for metadata in metadata_chunk]
-            chunk_message = f"Processing chunk {chunk_index}/{total_chunks} ({len(metadata_chunk)} articles)"
-            chunk_entry = chunk_report[chunk_index - 1]
-            chunk_entry["status"] = "running"
-            chunk_entry["message"] = chunk_message
-            persist_task(
-                task_id,
-                message=chunk_message,
-                progress=0.1 + (0.7 * ((chunk_index - 1) / total_chunks)),
-                chunk_report=chunk_report,
-            )
-            try:
-                pmcids = [m.pmcid for m in metadata_chunk if m.pmcid]
-                pmids_for_download = [m.pmid for m in metadata_chunk if m.pmcid]
-                chunk_fulltext_docs = []
-
-                if pmcids:
-                    chunk_fulltext_docs, chunk_fulltext_report = await downloader.batch_download_with_report(
-                        pmcids,
-                        pmids_for_download,
-                    )
-                    aggregated_fulltext_report = merge_fulltext_reports(aggregated_fulltext_report, chunk_fulltext_report)
-                else:
-                    chunk_fulltext_report = create_empty_fulltext_report()
-
-                chunk_entry["fulltext_downloaded"] = len(chunk_fulltext_docs)
-                persist_task(task_id, fulltext_report=aggregated_fulltext_report)
-
-                for metadata in metadata_chunk:
-                    if not metadata.pmcid:
-                        article_report[metadata.pmid]["fulltext_status"] = "no_pmc"
-                        article_report[metadata.pmid]["extraction_status"] = "skipped"
-                        article_report[metadata.pmid]["result_status"] = "metadata_only"
-
-                for item in chunk_fulltext_report.get("items", []):
-                    pmid = item.get("pmid")
-                    if not pmid or pmid not in article_report:
-                        continue
-                    article_report[pmid]["fulltext_status"] = item.get("reason", item.get("status", "unknown"))
-                    article_report[pmid]["error"] = item.get("message", "")
-
-                for doc in chunk_fulltext_docs:
-                    if doc.pmid in article_report:
-                        article_report[doc.pmid]["fulltext_status"] = "ready"
-                        article_report[doc.pmid]["error"] = ""
-
-                if chunk_fulltext_docs:
-                    cached_results: List[Dict[str, Any]] = []
-                    docs_to_extract = []
-                    docs_by_pmid = {doc.pmid: doc for doc in chunk_fulltext_docs}
-                    for doc in chunk_fulltext_docs:
-                        text_hash = stable_hash(doc.filtered_text or "")
-                        cached_result = active_task_store.get_extraction_cache(
-                            pmid=doc.pmid,
-                            model_name=extractor.model,
-                            schema_hash=extraction_schema_hash,
-                            text_hash=text_hash,
-                        )
-                        if cached_result is not None:
-                            cached_result["pmid"] = doc.pmid
-                            cached_results.append(cached_result)
-                        else:
-                            docs_to_extract.append(doc)
-
-                    chunk_extraction_results: List[Dict[str, Any]] = list(cached_results)
-                    if docs_to_extract:
-                        fresh_results = await extractor.batch_extract(
-                            docs_to_extract,
-                            schema_model,
-                            concurrency=config.extraction.concurrency
-                        )
-                        for result in fresh_results:
-                            if "error" not in result and result.get("pmid"):
-                                matching_doc = docs_by_pmid.get(result.get("pmid"))
-                                if matching_doc is not None:
-                                    active_task_store.put_extraction_cache(
-                                        pmid=matching_doc.pmid,
-                                        model_name=extractor.model,
-                                        schema_hash=extraction_schema_hash,
-                                        text_hash=stable_hash(matching_doc.filtered_text or ""),
-                                        result=result,
-                                    )
-                        chunk_extraction_results.extend(fresh_results)
-
-                    extraction_results.extend(chunk_extraction_results)
-                    chunk_successes = sum(1 for result in chunk_extraction_results if "error" not in result)
-                    chunk_failures = len(chunk_extraction_results) - chunk_successes
-                    chunk_entry["cached_hits"] = len(cached_results)
-                    chunk_entry["extraction_success"] = chunk_successes
-                    chunk_entry["extraction_failed"] = chunk_failures
-                    aggregated_extraction_report = merge_extraction_reports(
-                        aggregated_extraction_report,
-                        attempted=len(chunk_fulltext_docs),
-                        cached_hits=len(cached_results),
-                        fresh_runs=len(docs_to_extract),
-                        success=chunk_successes,
-                        failed=chunk_failures,
-                    )
-                    persist_task(task_id, extraction_report=aggregated_extraction_report)
-                    extraction_by_pmid = {result.get("pmid"): result for result in chunk_extraction_results}
-
-                    for doc in chunk_fulltext_docs:
-                        item = article_report.get(doc.pmid)
-                        if item is None:
-                            continue
-
-                        result = extraction_by_pmid.get(doc.pmid)
-                        if not result:
-                            item["extraction_status"] = "missing"
-                            item["result_status"] = "metadata_only"
-                            continue
-
-                        if "error" in result:
-                            item["extraction_status"] = "failed"
-                            item["result_status"] = "metadata_only"
-                            item["error"] = str(result.get("error", ""))
-                        else:
-                            item["extraction_status"] = "success"
-                            item["result_status"] = "full_table"
-                else:
-                    for metadata in metadata_chunk:
-                        item = article_report[metadata.pmid]
-                        if item["fulltext_status"] != "ready":
-                            item["extraction_status"] = "skipped"
-                            item["result_status"] = "metadata_only"
-
-                chunk_entry["status"] = "completed"
-                chunk_entry["message"] = (
-                    f"Completed with {chunk_entry['fulltext_downloaded']} full text, "
-                    f"{chunk_entry['extraction_success']} extraction success, "
-                    f"{chunk_entry['cached_hits']} cache hits"
-                )
-            except Exception as chunk_error:
-                had_chunk_failures = True
-                logger.error(f"Chunk {chunk_index} failed in task {task_id}: {chunk_error}")
-                if "Zhipu API authentication failed" in str(chunk_error):
-                    raise
-                chunk_entry["status"] = "failed"
-                chunk_entry["message"] = str(chunk_error)
-                for metadata in metadata_chunk:
-                    item = article_report.get(metadata.pmid)
-                    if item is None:
-                        continue
-                    if item["fulltext_status"] == "pending":
-                        item["fulltext_status"] = "request_failed" if metadata.pmcid else "no_pmc"
-                    if item["extraction_status"] in {"pending", "skipped"} and metadata.pmcid:
-                        item["extraction_status"] = "failed"
-                    if item["result_status"] == "pending":
-                        item["result_status"] = "metadata_only"
-                    item["error"] = str(chunk_error)
-
-            persist_task(
-                task_id,
-                article_report=list(article_report.values()),
-                extraction_report=aggregated_extraction_report,
-                progress=0.1 + (0.7 * (chunk_index / total_chunks)),
-                chunk_report=chunk_report,
-            )
-
-        if aggregated_fulltext_report.get("pmc_candidates", 0) == 0:
-            logger.warning("No articles with PMC full text available, skipping LLM extraction")
-
-        if citation_task and citation_client:
-            persist_task(task_id, message="Finalizing citation data...")
-            citation_data = await citation_task
-            apply_citation_data(metadata_list, citation_data)
-            for item in article_report.values():
-                item["citation_status"] = "success"
-            persist_task(task_id, citation_report=citation_client.last_citation_report)
-            persist_task(task_id, article_report=list(article_report.values()))
-
-        persist_task(task_id, message="Exporting results...", progress=0.9)
-
-        # Export results
-        output_dir = Path(config.output.directory)
-        output_dir.mkdir(exist_ok=True)
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        export_basename = build_export_basename(
-            timestamp=timestamp,
-            article_count=len(metadata_list),
-            fetch_citations=fetch_citations,
-            custom_field_count=len(custom_fields or []),
-        )
-        output_file = output_dir / f"{export_basename}.csv"
-
-        exporter = CSVExporter(custom_columns=custom_output_columns)
-        csv_path = exporter.export(
-            metadata_list,
-            extraction_results,
-            str(output_file),
-            include_abstract=config.output.include_abstract,
-            include_citations=fetch_citations,
-        )
-
-        extraction_attempted = aggregated_extraction_report.get("attempted", 0)
-        extraction_success = aggregated_extraction_report.get("success", 0)
-        extraction_failed = aggregated_extraction_report.get("failed", 0)
-        if extraction_attempted > 0 and extraction_success == 0 and extraction_failed > 0:
-            final_status = "failed"
-            final_message = "Extraction failed for all LLM-eligible articles. Check API credentials or extraction errors."
-        elif had_chunk_failures:
-            final_status = "partial"
-            final_message = "Extraction completed with some failed chunks"
-        else:
-            final_status = "completed"
-            final_message = "Extraction completed"
-
-        # Store only the filename, not the full path.
-        persist_task(
-            task_id,
-            status=final_status,
-            progress=1.0,
-            message=final_message,
-            result_file=Path(csv_path).name,
-            article_report=list(article_report.values()),
-            chunk_report=chunk_report,
-        )
-
-    except Exception as e:
-        logger.error(f"Extraction task error: {e}")
-        persist_task(task_id, status="failed", message=str(e), chunk_report=chunk_report or None)
+    """Background task wrapper that delegates to the shared task runner."""
+    await run_persisted_extraction_task(
+        config=config,
+        store=get_task_store(),
+        task_id=task_id,
+        pmids=pmids,
+        custom_fields=custom_fields,
+        fetch_citations=fetch_citations,
+    )
 
 
 @app.get("/api/tasks/{task_id}")
@@ -1123,18 +795,14 @@ async def retry_task_articles(task_id: str, request: RetryTaskRequest, backgroun
         else bool(source_payload.get("fetch_citations", False))
     )
 
-    retry_task_id = f"{task_id}_retry_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    get_task_store().create_task(
-        retry_task_id,
-        retry_pmids,
-        request_payload={
-            "pmids": retry_pmids,
-            "custom_fields": [field.model_dump() for field in custom_fields_payload or []],
-            "fetch_citations": fetch_citations,
-            "retry_of": task_id,
-        },
+    retry_task_id = create_persisted_extraction_task(
+        get_task_store(),
+        pmids=retry_pmids,
+        custom_fields=custom_fields_payload,
+        fetch_citations=fetch_citations,
+        retry_of=task_id,
+        task_id=f"{task_id}_retry_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
     )
-
     background_tasks.add_task(
         run_extraction_task,
         retry_task_id,

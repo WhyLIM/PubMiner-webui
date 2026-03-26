@@ -99,6 +99,13 @@ class OAPdfConfig(BaseSettings):
     cache_dir: str = Field("./download/pdf_cache", description="Local PDF cache directory")
     timeout: int = Field(30, description="Request timeout in seconds")
     max_retries: int = Field(3, description="Maximum retry attempts")
+    resolve_concurrency: int = Field(8, ge=1, le=32, description="Concurrent OA resolve operations")
+    pmc_download_concurrency: int = Field(8, ge=1, le=32, description="Concurrent PMC-first OA downloads")
+    fallback_download_concurrency: int = Field(3, ge=1, le=16, description="Concurrent fallback OA downloads")
+    pmc_timeout: int = Field(30, ge=5, le=300, description="PMC-first request timeout in seconds")
+    fallback_timeout: int = Field(15, ge=5, le=120, description="Fallback request timeout in seconds")
+    pmc_max_retries: int = Field(2, ge=1, le=10, description="PMC-first retry attempts")
+    fallback_max_retries: int = Field(1, ge=1, le=10, description="Fallback retry attempts")
     cache_only_when_license_known: bool = Field(
         True, description="Only mark downloads cache-safe when a license is known"
     )

@@ -484,3 +484,53 @@ class SQLiteTaskStore:
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
         }
+
+    def list_tasks(self, limit: int = 20) -> List[Dict[str, Any]]:
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT task_id, status, progress, message, result_file, created_at, updated_at
+                FROM tasks
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (int(limit),),
+            ).fetchall()
+
+        return [
+            {
+                "task_id": row["task_id"],
+                "status": row["status"],
+                "progress": row["progress"],
+                "message": row["message"],
+                "result_file": row["result_file"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+            for row in rows
+        ]
+
+    def list_search_sessions(self, limit: int = 20) -> List[Dict[str, Any]]:
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT session_id, source, query, total_available, scope_limit, created_at, updated_at
+                FROM search_sessions
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (int(limit),),
+            ).fetchall()
+
+        return [
+            {
+                "session_id": row["session_id"],
+                "source": row["source"],
+                "query": row["query"],
+                "total_available": int(row["total_available"]),
+                "scope_limit": int(row["scope_limit"]),
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+            for row in rows
+        ]

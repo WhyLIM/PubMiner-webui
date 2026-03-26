@@ -8,6 +8,7 @@ import json
 import re
 import tarfile
 import tempfile
+import time
 from html.parser import HTMLParser
 from datetime import datetime, timezone
 from pathlib import Path
@@ -85,6 +86,7 @@ class OAPdfResolver:
         enable_pmc: bool = True,
         enable_unpaywall: bool = True,
         enable_europepmc: bool = True,
+        resolve_concurrency: int = 5,
     ) -> None:
         self.timeout_seconds = timeout
         self.timeout = aiohttp.ClientTimeout(total=timeout)
@@ -96,6 +98,7 @@ class OAPdfResolver:
         self.enable_pmc = enable_pmc
         self.enable_unpaywall = enable_unpaywall
         self.enable_europepmc = enable_europepmc
+        self.resolve_concurrency = max(1, resolve_concurrency)
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.manifest_path = self.cache_dir / "manifest.jsonl"
@@ -107,7 +110,7 @@ class OAPdfResolver:
     async def resolve_many(self, articles: List[Dict[str, Any]]) -> List[OAPdfResolution]:
         async with aiohttp.ClientSession(timeout=self.timeout) as session:
             prepared_articles = await self._prepare_articles_for_batch(session, articles)
-            semaphore = asyncio.Semaphore(min(5, max(1, len(prepared_articles))))
+            semaphore = asyncio.Semaphore(min(self.resolve_concurrency, max(1, len(prepared_articles))))
 
             async def run_single(article: Dict[str, Any]) -> OAPdfResolution:
                 async with semaphore:
@@ -283,11 +286,14 @@ class OAPdfResolver:
                     status="downloaded",
                     cached=True,
                     license=candidate.license,
+                    elapsed_ms=0,
                     downloaded_at=self._utc_now(),
                 )
 
             try:
+                started_at = time.perf_counter()
                 payload = await self._download_pdf(session, resolution, candidate)
+                elapsed_ms = int((time.perf_counter() - started_at) * 1000)
             except Exception as exc:
                 last_error = str(exc) or repr(exc)
                 logger.warning(
@@ -312,6 +318,7 @@ class OAPdfResolver:
                 sha256=payload["sha256"],
                 license=candidate.license,
                 cached=False,
+                elapsed_ms=elapsed_ms,
                 downloaded_at=self._utc_now(),
             )
             if candidate.can_cache:
@@ -327,6 +334,7 @@ class OAPdfResolver:
             pdf_url=first_candidate.pdf_url or "",
             status="failed",
             license=first_candidate.license,
+            elapsed_ms=None,
             downloaded_at=self._utc_now(),
             error=last_error or "No OA PDF candidate could be downloaded",
         )
