@@ -244,6 +244,30 @@ From the project root you can also use:
 
 This script always uses [\.venv\Scripts\python.exe](/D:/Study/Project/PubMiner2/.venv/Scripts/python.exe), starts [api_server.py](/D:/Study/Project/PubMiner2/PubMiner/api_server.py) from the correct backend directory, and warns if port `8000` is already occupied.
 
+### Environment Files
+
+Recommended convention:
+
+- use [\.env.example](/D:/Study/Project/PubMiner2/.env.example) as the template
+- copy it to [.env.local](/D:/Study/Project/PubMiner2/.env.local) on your machine
+- keep real secrets only in `.env.local`
+- do not commit `.env.local`
+
+Current lookup behavior:
+
+- the backend supports both root and backend-local env files for backward compatibility
+- the effective priority is now:
+  1. root `.env.local`
+  2. root `.env`
+  3. `PubMiner/.env.local`
+  4. `PubMiner/.env`
+
+Practical guidance:
+
+- prefer putting `NCBI_EMAIL`, `NCBI_API_KEY`, `ZHIPU_API_KEY`, `UNPAYWALL_EMAIL`, and `NEXT_PUBLIC_API_URL` in the root [.env.local](/D:/Study/Project/PubMiner2/.env.local)
+- if both root and backend env files exist, the root `.env.local` should now win
+- the repository only ships the root [/.env.example](/D:/Study/Project/PubMiner2/.env.example) template now
+
 ### 3. Command Line Interface
 
 The backend package now also supports direct CLI usage.

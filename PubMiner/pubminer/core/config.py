@@ -180,10 +180,10 @@ class Config(BaseSettings):
     def _load_env_overrides(project_dir: Path) -> dict:
         """Load env values from common local files without requiring shell export."""
         env_paths = [
-            project_dir.parent / ".env.local",
-            project_dir.parent / ".env",
-            project_dir / ".env.local",
             project_dir / ".env",
+            project_dir / ".env.local",
+            project_dir.parent / ".env",
+            project_dir.parent / ".env.local",
         ]
         values = {}
 
