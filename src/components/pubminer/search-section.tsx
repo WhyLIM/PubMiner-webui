@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -59,7 +59,11 @@ const exampleQueries = [
 
 const INITIAL_QUERY_LOAD_SIZE = 50;
 
-export function SearchSection() {
+interface SearchSectionProps {
+  defaultUnpaywallEmail?: string;
+}
+
+export function SearchSection({ defaultUnpaywallEmail = "" }: SearchSectionProps) {
   const [searchTerms, setSearchTerms] = useState<SearchTerm[]>([
     { id: "1", term: "", field: "all", operator: "" },
   ]);
@@ -78,6 +82,12 @@ export function SearchSection() {
     setUnpaywallEmail,
     clearOaPdfResolutions,
   } = useAppStore();
+
+  useEffect(() => {
+    if (!unpaywallEmail && defaultUnpaywallEmail) {
+      setUnpaywallEmail(defaultUnpaywallEmail);
+    }
+  }, [defaultUnpaywallEmail, setUnpaywallEmail, unpaywallEmail]);
 
   const generatedQuery = searchTerms
     .map((st, index) => {

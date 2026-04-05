@@ -178,12 +178,16 @@ class Config(BaseSettings):
 
     @staticmethod
     def _load_env_overrides(project_dir: Path) -> dict:
-        """Load env values from common local files without requiring shell export."""
+        """Load env values from common local files without requiring shell export.
+
+        Canonical source of truth is now `.env`. `.env.local` remains a
+        backward-compatible fallback for older local setups.
+        """
         env_paths = [
-            project_dir / ".env",
             project_dir / ".env.local",
-            project_dir.parent / ".env",
             project_dir.parent / ".env.local",
+            project_dir / ".env",
+            project_dir.parent / ".env",
         ]
         values = {}
 

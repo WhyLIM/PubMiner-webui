@@ -179,13 +179,13 @@ Use the root directories with the following intent:
   - `prisma/` for database schema and Prisma metadata
   - `public/` for frontend static assets
 - Documentation and examples
-  - `docs/` for example inputs, notes, and future project docs
+- `docs/` for example inputs, notes, and future project docs
 - Runtime artifacts
   - `download/` for PMC BioC cache and OA PDF cache
   - `output/` for exported CSV files and checkpoints
   - `db/` for local SQLite files, including persisted task and search-session state
 - Local machine only
-  - `.venv/`, `.env.local`, `.tmp/`, and local log files are environment-specific and should not be treated as source files
+  - `.venv/`, `.env`, `.tmp/`, and local log files are environment-specific and should not be treated as source files
 
 When adding new files, prefer:
 
@@ -234,7 +234,7 @@ By default the backend runs on:
 
 - [http://localhost:8000](http://localhost:8000)
 
-If you start the backend this way, set `NEXT_PUBLIC_API_URL=http://localhost:8000` in [.env.local](/D:/Study/Project/PubMiner2/.env.local) before starting the Next.js frontend.
+If you start the backend this way, set `NEXT_PUBLIC_API_URL=http://localhost:8000` in [/.env](/D:/Study/Project/PubMiner2/.env) before starting the Next.js frontend.
 
 From the project root you can also use:
 
@@ -249,23 +249,23 @@ This script always uses [\.venv\Scripts\python.exe](/D:/Study/Project/PubMiner2/
 Recommended convention:
 
 - use [\.env.example](/D:/Study/Project/PubMiner2/.env.example) as the template
-- copy it to [.env.local](/D:/Study/Project/PubMiner2/.env.local) on your machine
-- keep real secrets only in `.env.local`
-- do not commit `.env.local`
+- copy it to [/.env](/D:/Study/Project/PubMiner2/.env) on your machine
+- keep real secrets only in `.env`
+- do not commit `.env`
 
 Current lookup behavior:
 
 - the backend supports both root and backend-local env files for backward compatibility
 - the effective priority is now:
-  1. root `.env.local`
-  2. root `.env`
-  3. `PubMiner/.env.local`
-  4. `PubMiner/.env`
+  1. root `.env`
+  2. `PubMiner/.env`
+  3. root `.env.local`
+  4. `PubMiner/.env.local`
 
 Practical guidance:
 
-- prefer putting `NCBI_EMAIL`, `NCBI_API_KEY`, `ZHIPU_API_KEY`, `UNPAYWALL_EMAIL`, and `NEXT_PUBLIC_API_URL` in the root [.env.local](/D:/Study/Project/PubMiner2/.env.local)
-- if both root and backend env files exist, the root `.env.local` should now win
+- prefer putting `NCBI_EMAIL`, `NCBI_API_KEY`, `ZHIPU_API_KEY`, `UNPAYWALL_EMAIL`, and `NEXT_PUBLIC_API_URL` in the root [/.env](/D:/Study/Project/PubMiner2/.env)
+- if both `.env` and `.env.local` exist, `.env` should now win
 - the repository only ships the root [/.env.example](/D:/Study/Project/PubMiner2/.env.example) template now
 
 ### 3. Command Line Interface

@@ -224,7 +224,7 @@ export const useAppStore = create<AppState>((set) => ({
         hasMore: false,
       },
     }),
-  unpaywallEmail: "1632787660@qq.com",
+  unpaywallEmail: "",
   setUnpaywallEmail: (email) => set({ unpaywallEmail: email }),
   oaPdfByPmid: {},
   setOaPdfResolutions: (resolutions) =>

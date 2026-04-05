@@ -9,6 +9,8 @@ import { TasksSection } from "@/components/pubminer/tasks-section";
 import { ResultsSection } from "@/components/pubminer/results-section";
 
 export default function Home() {
+  const defaultUnpaywallEmail = process.env.UNPAYWALL_EMAIL || "";
+
   return (
     <div className="flex min-h-screen flex-col bg-background">
       <Header />
@@ -21,7 +23,7 @@ export default function Home() {
         <WorkflowSection />
 
         {/* Search - now includes Extraction Fields in Advanced Options */}
-        <SearchSection />
+        <SearchSection defaultUnpaywallEmail={defaultUnpaywallEmail} />
 
         {/* Search Results */}
         <SearchResultsSection />
